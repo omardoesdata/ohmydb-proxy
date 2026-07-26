@@ -42,6 +42,8 @@ class ProxyOptions:
     estimator_user: str
     estimator_password: str
     confirmation_provider: ConfirmationProvider
+    database_engine: str = "postgres"
+    estimate_timeout_seconds: float = 8.0
 
 
 @dataclass
@@ -75,9 +77,11 @@ async def _estimate(classification: Classification, opts: ProxyOptions, database
         db_opts = DbConnectionOptions(
             host=opts.target_host, port=opts.target_port,
             user=opts.estimator_user, password=opts.estimator_password,
-            database=database,
+            database=database, timeout_seconds=opts.estimate_timeout_seconds,
         )
-        rows = await estimate_affected_rows(classification.preview_query, db_opts)
+        rows = await estimate_affected_rows(
+            classification.preview_query, db_opts, engine=opts.database_engine
+        )
         return rows, None
     except Exception as e:
         return None, str(e)
