@@ -1,88 +1,178 @@
-"""Dialect-aware SQL risk classification and read-only impact previews.
+﻿"""Dialect-aware SQL classification and read-only impact previews."""
 
-The classifier is database-agnostic: sqlglot parses the configured dialect and
-we produce SELECT-based preview SQL. Execution of that preview belongs to a
-separate database adapter.
-"""
+from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import Optional
 
 import sqlglot
 from sqlglot import exp
 
+from .policy import Severity
+
 Dialect = str
 
 
 @dataclass
 class Classification:
-    risk: str  # "safe" | "risky" | "unknown"
+    risk: str
     statement_type: str
     reason: str
+
     preview_query: Optional[str] = None
-    impact_kind: str = "unknown"  # rows | schema | permissions | unknown
+    impact_kind: str = "unknown"
+
+    target_table: Optional[str] = None
+    has_where: Optional[bool] = None
+    severity: Severity = Severity.HIGH
 
 
-def classify(sql: str, dialect: Dialect = "postgres") -> Classification:
+def classify(
+    sql: str,
+    dialect: Dialect = "postgres",
+) -> Classification:
     try:
         ast = sqlglot.parse_one(sql, read=dialect)
     except Exception as exc:
         return Classification(
             risk="unknown",
-            statement_type="unparseable",
+            statement_type="UNPARSEABLE",
             reason=f"Could not parse SQL safely: {exc}",
+            severity=Severity.HIGH,
         )
 
     if isinstance(ast, exp.Select):
-        return Classification("safe", "SELECT", "Read-only query", impact_kind="rows")
+        return Classification(
+            risk="safe",
+            statement_type="SELECT",
+            reason="Read-only query",
+            impact_kind="rows",
+            severity=Severity.LOW,
+        )
 
     if isinstance(ast, (exp.Update, exp.Delete)):
-        stmt_type = "UPDATE" if isinstance(ast, exp.Update) else "DELETE"
+        statement_type = (
+            "UPDATE"
+            if isinstance(ast, exp.Update)
+            else "DELETE"
+        )
+
+        table = ast.find(exp.Table)
         where = ast.find(exp.Where)
-        preview_query = _build_count_query(ast, where, dialect)
+
+        target_table = _table_name(table)
+        preview_query = _build_count_query(
+            ast,
+            where,
+            dialect,
+        )
+
         if where is None:
             return Classification(
                 risk="risky",
-                statement_type=stmt_type,
-                reason=f"{stmt_type} has no WHERE clause - this will affect every row in the target table",
+                statement_type=statement_type,
+                reason=(
+                    f"{statement_type} has no WHERE clause - "
+                    "this will affect every row in the target table"
+                ),
                 preview_query=preview_query,
                 impact_kind="rows",
+                target_table=target_table,
+                has_where=False,
+                severity=Severity.CRITICAL,
             )
+
         return Classification(
             risk="risky",
-            statement_type=stmt_type,
-            reason=f"{stmt_type} has a WHERE clause - review the matching row count before running",
+            statement_type=statement_type,
+            reason=(
+                f"{statement_type} has a WHERE clause - "
+                "review the matching row count before running"
+            ),
             preview_query=preview_query,
             impact_kind="rows",
+            target_table=target_table,
+            has_where=True,
+            severity=Severity.MEDIUM,
         )
 
     if isinstance(ast, exp.TruncateTable):
         table = ast.find(exp.Table)
-        preview = exp.select("COUNT(*)").from_(table.copy()).sql(dialect=dialect) if table else None
+
+        preview = (
+            exp.select("COUNT(*)")
+            .from_(table.copy())
+            .sql(dialect=dialect)
+            if table
+            else None
+        )
+
         return Classification(
-            "risky", "TRUNCATE", "TRUNCATE removes all rows from the target table",
-            preview_query=preview, impact_kind="rows",
+            risk="risky",
+            statement_type="TRUNCATE",
+            reason="TRUNCATE removes all rows from the target table",
+            preview_query=preview,
+            impact_kind="rows",
+            target_table=_table_name(table),
+            has_where=False,
+            severity=Severity.CRITICAL,
         )
 
     if isinstance(ast, exp.Drop):
+        table = ast.find(exp.Table)
+
         return Classification(
-            "risky", "DROP", "DROP is a structural and potentially irreversible change",
+            risk="risky",
+            statement_type="DROP",
+            reason=(
+                "DROP is a structural and potentially irreversible change"
+            ),
             impact_kind="schema",
+            target_table=_table_name(table),
+            severity=Severity.CRITICAL,
         )
 
-    if isinstance(ast, (exp.Alter, exp.Create)):
+    if isinstance(ast, exp.Alter):
+        table = ast.find(exp.Table)
+
         return Classification(
-            "risky", type(ast).__name__.upper(),
-            "This statement changes database structure",
+            risk="risky",
+            statement_type="ALTER",
+            reason="ALTER changes database structure",
             impact_kind="schema",
+            target_table=_table_name(table),
+            severity=Severity.HIGH,
         )
 
-    # Unknown statements are not silently called safe. The proxy currently
-    # forwards them, but the classification is visible for future policy modes.
+    if isinstance(ast, exp.Create):
+        table = ast.find(exp.Table)
+
+        return Classification(
+            risk="risky",
+            statement_type="CREATE",
+            reason="CREATE changes database structure",
+            impact_kind="schema",
+            target_table=_table_name(table),
+            severity=Severity.MEDIUM,
+        )
+
     return Classification(
         risk="unknown",
-        statement_type=type(ast).__name__,
-        reason="Statement type is not yet covered by a dedicated safety rule",
+        statement_type=type(ast).__name__.upper(),
+        reason=(
+            "Statement type is not yet covered by a dedicated safety rule"
+        ),
+        severity=Severity.HIGH,
     )
+
+
+def _table_name(
+    table: Optional[exp.Table],
+) -> Optional[str]:
+    if table is None:
+        return None
+
+    return table.sql()
 
 
 def _build_count_query(
@@ -91,10 +181,13 @@ def _build_count_query(
     dialect: Dialect,
 ) -> Optional[str]:
     table = ast.find(exp.Table)
+
     if table is None:
         return None
 
     preview = exp.select("COUNT(*)").from_(table.copy())
+
     if where is not None:
         preview = preview.where(where.this.copy())
+
     return preview.sql(dialect=dialect)

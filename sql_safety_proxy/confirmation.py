@@ -1,10 +1,13 @@
-"""Confirmation step is pluggable so the CLI prompt used now can be swapped
-for a real popup UI later without touching the proxy logic."""
+﻿"""Pluggable confirmation providers for SQL safety decisions."""
+
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from .policy import PolicyDecision
     from .sql_classifier import Classification
 
 
@@ -14,6 +17,9 @@ class QueryContext:
     classification: "Classification"
     estimated_rows: Optional[int] = None
     estimate_error: Optional[str] = None
+    policy_decision: Optional["PolicyDecision"] = None
+    database: Optional[str] = None
+    approximate_estimate: bool = False
 
 
 class ConfirmationProvider(ABC):
@@ -23,14 +29,25 @@ class ConfirmationProvider(ABC):
 
 
 class CliConfirmationProvider(ConfirmationProvider):
-    """Real usage: prompts in the terminal. Will be replaced by the popup UI."""
-
     async def confirm(self, ctx: QueryContext) -> bool:
-        print("\n[sql-safety-proxy] RISKY QUERY DETECTED")
+        print("\n[sql-safety-proxy] QUERY CONFIRMATION REQUIRED")
         print(f"  SQL: {ctx.sql}")
-        print(f"  Reason: {ctx.classification.reason}")
+        print(f"  Operation: {ctx.classification.statement_type}")
+        print(f"  Table: {ctx.classification.target_table or 'unknown'}")
+
+        if ctx.database:
+            print(f"  Database: {ctx.database}")
+
+        if ctx.policy_decision:
+            print(f"  Severity: {ctx.policy_decision.severity.value}")
+            print(f"  Policy: {ctx.policy_decision.action.value}")
+            print(f"  Policy reason: {ctx.policy_decision.reason}")
+
+        print(f"  Classification reason: {ctx.classification.reason}")
+
         if ctx.estimated_rows is not None:
-            print(f"  Estimated rows affected: {ctx.estimated_rows}")
+            suffix = " (approximate)" if ctx.approximate_estimate else ""
+            print(f"  Estimated rows affected: {ctx.estimated_rows}{suffix}")
         elif ctx.estimate_error:
             print(f"  Could not estimate impact: {ctx.estimate_error}")
 
@@ -39,14 +56,10 @@ class CliConfirmationProvider(ConfirmationProvider):
 
 
 class AutoApproveProvider(ConfirmationProvider):
-    """Test/automation helper - always approves."""
-
     async def confirm(self, ctx: QueryContext) -> bool:
         return True
 
 
 class AutoDenyProvider(ConfirmationProvider):
-    """Test/automation helper - always denies."""
-
     async def confirm(self, ctx: QueryContext) -> bool:
         return False
