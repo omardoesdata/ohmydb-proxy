@@ -10,15 +10,32 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+
     strategy:
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - run: python -m pip install --upgrade pip
-      - run: pip install -e .
-      - run: python -m compileall sql_safety_proxy
-      - run: python -m unittest discover -s tests -v
+          cache: pip
+
+      - name: Upgrade packaging tools
+        run: python -m pip install --upgrade pip setuptools wheel
+
+      - name: Install package and test dependencies
+        run: python -m pip install -e ".[dev]"
+
+      - name: Compile package
+        run: python -m compileall sql_safety_proxy
+
+      - name: Run tests
+        run: python -m pytest -v
+
+      - name: Build package
+        run: python -m build

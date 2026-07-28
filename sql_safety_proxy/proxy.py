@@ -1,32 +1,66 @@
-"""The intercepting proxy - wires together protocol framing, classification,
-risk estimation, and confirmation, using asyncio streams.
+"""PostgreSQL wire proxy with classification, estimation, policy control,
+confirmation, and JSONL audit logging.
 
-Handles BOTH protocols Postgres clients use:
- - Simple Query ('Q') - what psql's `-c` and most ad hoc tools send.
- - Extended Query (Parse/Bind/Execute) - what most real drivers and ORMs
-   (asyncpg, psycopg2, JDBC, ...) send, even for a single one-off query.
-Missing the extended protocol would mean the proxy only protects ad hoc
-terminal sessions and silently lets application traffic through unchecked -
-so both paths funnel into the same classify -> estimate -> confirm flow.
+Supported PostgreSQL client execution paths:
+
+- Simple Query protocol:
+  Used by psql and some direct SQL clients.
+
+- Extended Query protocol:
+  Parse -> Bind -> Execute, used by asyncpg, psycopg, JDBC, ORMs, and most
+  application drivers.
+
+Both execution paths pass through the same safety workflow:
+
+    classify -> estimate -> policy -> confirm/block/allow -> audit
 """
-import asyncio
-from dataclasses import dataclass, field
 
+from __future__ import annotations
+
+import asyncio
+from dataclasses import dataclass, field, replace
+from typing import Optional
+
+from .audit import JsonlAuditLogger, build_audit_event
+from .confirmation import ConfirmationProvider, QueryContext
+from .extended_protocol import (
+    BindMessage,
+    parse_bind_message,
+    parse_execute_message,
+    parse_parse_message,
+)
+from .fail_safe import (
+    FailSafeMode,
+    ProtocolGapAction,
+    evaluate_protocol_gap,
+)
+from .param_decoder import decode_param
 from .pg_protocol import (
-    is_negotiation_request,
     FrontendFramer,
     FrontendMessage,
-    parse_simple_query_text,
-    parse_startup_params,
     build_error_response,
     build_ready_for_query,
+    is_negotiation_request,
+    parse_simple_query_text,
+    parse_startup_params,
 )
-from .extended_protocol import parse_parse_message, parse_bind_message, parse_execute_message, BindMessage
-from .sql_classifier import classify, Classification, Dialect
-from .risk_estimator import estimate_affected_rows, DbConnectionOptions
-from .confirmation import ConfirmationProvider, QueryContext
-from .param_decoder import decode_param
+from .policy import (
+    PolicyAction,
+    PolicyConfig,
+    PolicyDecision,
+    Severity,
+    evaluate_policy,
+)
 from .preview_builder import substitute_params
+from .risk_estimator import (
+    DbConnectionOptions,
+    estimate_affected_rows,
+)
+from .sql_classifier import (
+    Classification,
+    Dialect,
+    classify,
+)
 
 
 @dataclass
@@ -35,199 +69,642 @@ class ProxyOptions:
     target_host: str
     target_port: int
     dialect: Dialect
-    # Credentials the PROXY ITSELF uses to run read-only preview queries.
-    # Deliberately separate from whatever auth the connecting client uses -
-    # Postgres's SCRAM auth never puts a plaintext password on the wire for
-    # us to capture and reuse.
+
     estimator_user: str
     estimator_password: str
     confirmation_provider: ConfirmationProvider
+
     database_engine: str = "postgres"
     estimate_timeout_seconds: float = 8.0
+
+    policy_config: PolicyConfig = field(
+        default_factory=PolicyConfig
+    )
+
+    audit_logger: Optional[JsonlAuditLogger] = None
+    fail_safe_mode: FailSafeMode = FailSafeMode.BALANCED
 
 
 @dataclass
 class ConnectionState:
     database: str = "postgres"
-    # statement_name -> raw SQL text (with $1, $2... placeholders), from Parse messages.
-    prepared_statements: dict = field(default_factory=dict)
-    # portal_name -> BindMessage, from Bind messages.
-    portals: dict = field(default_factory=dict)
+
+    # Prepared statement name -> SQL template.
+    prepared_statements: dict[str, str] = field(
+        default_factory=dict
+    )
+
+    # Portal name -> parsed Bind message.
+    portals: dict[str, BindMessage] = field(
+        default_factory=dict
+    )
 
 
-async def _pipe_raw(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+async def _pipe_raw(
+    reader: asyncio.StreamReader,
+    writer: asyncio.StreamWriter,
+) -> None:
+    """Forward backend PostgreSQL responses to the connected client."""
+
     try:
         while True:
             chunk = await reader.read(65536)
+
             if not chunk:
                 break
+
             writer.write(chunk)
             await writer.drain()
-    except (ConnectionResetError, BrokenPipeError):
+
+    except (
+        ConnectionResetError,
+        BrokenPipeError,
+    ):
         pass
+
     finally:
         writer.close()
 
 
-async def _estimate(classification: Classification, opts: ProxyOptions, database: str):
-    """Runs classification.preview_query on a side connection. Returns (rows, error)."""
+async def _estimate(
+    classification: Classification,
+    opts: ProxyOptions,
+    database: str,
+) -> tuple[Optional[int], Optional[str]]:
+    """Execute a generated read-only preview query.
+
+    Returns:
+
+        (estimated_rows, error_message)
+    """
+
     if not classification.preview_query:
         return None, None
+
     try:
-        db_opts = DbConnectionOptions(
-            host=opts.target_host, port=opts.target_port,
-            user=opts.estimator_user, password=opts.estimator_password,
-            database=database, timeout_seconds=opts.estimate_timeout_seconds,
+        db_options = DbConnectionOptions(
+            host=opts.target_host,
+            port=opts.target_port,
+            user=opts.estimator_user,
+            password=opts.estimator_password,
+            database=database,
+            timeout_seconds=opts.estimate_timeout_seconds,
         )
+
         rows = await estimate_affected_rows(
-            classification.preview_query, db_opts, engine=opts.database_engine
+            classification.preview_query,
+            db_options,
+            engine=opts.database_engine,
         )
+
         return rows, None
-    except Exception as e:
-        return None, str(e)
+
+    except Exception as exc:
+        return None, str(exc)
 
 
-async def _confirm_and_decide(
+def _print_policy_result(
     sql: str,
     classification: Classification,
-    estimated_rows,
-    estimate_error,
-    approx_note: str,
+    decision: PolicyDecision,
+    estimated_rows: Optional[int],
+    approximate: bool,
+    protocol: str,
+) -> None:
+    """Print one structured safety decision to the proxy console."""
+
+    estimate_text = "unavailable"
+
+    if estimated_rows is not None:
+        estimate_text = str(estimated_rows)
+
+        if approximate:
+            estimate_text += " approximate"
+
+    print(
+        f'[proxy] {decision.action.value}: "{sql}" '
+        f"protocol={protocol} "
+        f"operation={classification.statement_type} "
+        f"table={classification.target_table or 'unknown'} "
+        f"severity={decision.severity.value} "
+        f"estimated_rows={estimate_text} "
+        f"reason={decision.reason}"
+    )
+
+
+async def _write_audit_event(
+    *,
+    sql: str,
+    protocol: str,
+    classification: Classification,
+    decision: PolicyDecision,
+    final_decision: str,
+    estimated_rows: Optional[int],
+    estimate_error: Optional[str],
+    approximate: bool,
+    database: str,
+    opts: ProxyOptions,
+) -> None:
+    """Append the final safety decision to the configured audit log."""
+
+    print(
+        "[proxy] fail-safe mode: "
+        f"{opts.fail_safe_mode.value}"
+    )
+
+    if opts.audit_logger is None:
+        return
+
+    event = build_audit_event(
+        sql=sql,
+        database=database,
+        operation=classification.statement_type,
+        target_table=classification.target_table,
+        severity=decision.severity.value,
+        policy_action=decision.action.value,
+        final_decision=final_decision,
+        estimated_rows=estimated_rows,
+        estimate_error=estimate_error,
+        classification_reason=classification.reason,
+        policy_reason=decision.reason,
+        approximate_estimate=approximate,
+        protocol=protocol,
+    )
+
+    try:
+        await opts.audit_logger.log(event)
+    except Exception as exc:
+        # Audit failure must be visible, but it must not crash the proxy
+        # after a safety decision has already been made.
+        print(
+            "[proxy] warning: failed to write audit event: "
+            f"{exc}"
+        )
+
+
+async def _evaluate_and_decide(
+    sql: str,
+    protocol: str,
+    classification: Classification,
+    estimated_rows: Optional[int],
+    estimate_error: Optional[str],
+    approximate: bool,
+    database: str,
+    opts: ProxyOptions,
+) -> tuple[bool, PolicyDecision]:
+    """Apply policy and return whether the SQL should be forwarded."""
+
+    decision = evaluate_policy(
+        classification=classification,
+        estimated_rows=estimated_rows,
+        estimate_error=estimate_error,
+        config=opts.policy_config,
+    )
+
+    _print_policy_result(
+        sql=sql,
+        classification=classification,
+        decision=decision,
+        estimated_rows=estimated_rows,
+        approximate=approximate,
+        protocol=protocol,
+    )
+
+    if decision.action == PolicyAction.ALLOW:
+        approved = True
+        final_decision = "ALLOWED"
+
+    elif decision.action == PolicyAction.BLOCK:
+        approved = False
+        final_decision = "BLOCKED_BY_POLICY"
+
+    else:
+        context = QueryContext(
+            sql=sql,
+            classification=classification,
+            estimated_rows=estimated_rows,
+            estimate_error=estimate_error,
+            policy_decision=decision,
+            database=database,
+            approximate_estimate=approximate,
+        )
+
+        approved = await opts.confirmation_provider.confirm(
+            context
+        )
+
+        final_decision = (
+            "APPROVED_BY_USER"
+            if approved
+            else "BLOCKED_BY_USER"
+        )
+
+        print(
+            "[proxy] user decision: "
+            + (
+                "APPROVED"
+                if approved
+                else "BLOCKED"
+            )
+        )
+
+    await _write_audit_event(
+        sql=sql,
+        protocol=protocol,
+        classification=classification,
+        decision=decision,
+        final_decision=final_decision,
+        estimated_rows=estimated_rows,
+        estimate_error=estimate_error,
+        approximate=approximate,
+        database=database,
+        opts=opts,
+    )
+
+    return approved, decision
+
+
+def _blocked_error(
+    classification: Classification,
+    estimated_rows: Optional[int],
+    decision: PolicyDecision,
+) -> bytes:
+    """Build a PostgreSQL error response for rejected queries."""
+
+    parts = [
+        "Query blocked by sql-safety-proxy.",
+        f"Policy: {decision.reason}.",
+        f"Severity: {decision.severity.value}.",
+        f"Operation: {classification.statement_type}.",
+    ]
+
+    if classification.target_table:
+        parts.append(
+            f"Table: {classification.target_table}."
+        )
+
+    if estimated_rows is not None:
+        parts.append(
+            f"Estimated rows affected: {estimated_rows}."
+        )
+
+    return build_error_response(
+        " ".join(parts)
+    )
+
+
+async def _handle_protocol_gap(
+    *,
+    protocol: str,
+    reason: str,
+    sql: str,
+    client_writer: asyncio.StreamWriter,
+    backend_writer: asyncio.StreamWriter,
+    raw_message: bytes,
+    database: str,
     opts: ProxyOptions,
 ) -> bool:
-    print(
-        f'[proxy] RISKY: "{sql}" -> {classification.reason}'
-        + (f" (estimated {estimated_rows} rows{approx_note})" if estimated_rows is not None else "")
-    )
-    ctx = QueryContext(sql=sql, classification=classification,
-                        estimated_rows=estimated_rows, estimate_error=estimate_error)
-    approved = await opts.confirmation_provider.confirm(ctx)
-    print(f"[proxy] decision: {'APPROVED, forwarding' if approved else 'BLOCKED'}")
-    return approved
+    """Handle SQL execution that cannot be reconstructed safely.
 
+    Returns True when the original message was forwarded.
+    """
 
-def _blocked_error(classification: Classification, estimated_rows) -> bytes:
-    reason = (
-        f"Query blocked by sql-safety-proxy: would affect {estimated_rows} row(s). {classification.reason}"
-        if estimated_rows is not None
-        else f"Query blocked by sql-safety-proxy: {classification.reason}"
+    gap_decision = evaluate_protocol_gap(
+        opts.fail_safe_mode,
+        reason,
     )
-    return build_error_response(reason)
+
+    classification = Classification(
+        risk="unknown",
+        statement_type="PROTOCOL_GAP",
+        reason=reason,
+        impact_kind="protocol",
+        severity=Severity.CRITICAL,
+    )
+
+    policy_decision = PolicyDecision(
+        action=(
+            PolicyAction.ALLOW
+            if gap_decision.action == ProtocolGapAction.ALLOW
+            else PolicyAction.BLOCK
+        ),
+        severity=classification.severity,
+        reason=gap_decision.reason,
+    )
+
+    forwarded = gap_decision.action == ProtocolGapAction.ALLOW
+    final_decision = (
+        "ALLOWED_PROTOCOL_GAP"
+        if forwarded
+        else "BLOCKED_PROTOCOL_GAP"
+    )
+
+    _print_policy_result(
+        sql=sql,
+        classification=classification,
+        decision=policy_decision,
+        estimated_rows=None,
+        approximate=False,
+        protocol=protocol,
+    )
+
+    await _write_audit_event(
+        sql=sql,
+        protocol=protocol,
+        classification=classification,
+        decision=policy_decision,
+        final_decision=final_decision,
+        estimated_rows=None,
+        estimate_error=reason,
+        approximate=False,
+        database=database,
+        opts=opts,
+    )
+
+    if forwarded:
+        backend_writer.write(raw_message)
+        await backend_writer.drain()
+        return True
+
+    client_writer.write(
+        build_error_response(
+            "Query blocked by sql-safety-proxy. "
+            f"Protocol gap: {gap_decision.reason}.",
+            sql_state="0A000",
+        )
+    )
+    await client_writer.drain()
+    return False
 
 
 async def _handle_simple_query(
-    msg: FrontendMessage, backend_writer: asyncio.StreamWriter,
-    client_writer: asyncio.StreamWriter, opts: ProxyOptions, state: ConnectionState,
+    msg: FrontendMessage,
+    backend_writer: asyncio.StreamWriter,
+    client_writer: asyncio.StreamWriter,
+    opts: ProxyOptions,
+    state: ConnectionState,
 ) -> None:
-    sql = parse_simple_query_text(msg.payload)
-    classification = classify(sql, opts.dialect)
+    """Handle PostgreSQL Simple Query messages."""
 
-    if classification.risk != "risky":
+    sql = parse_simple_query_text(
+        msg.payload
+    )
+
+    classification = classify(
+        sql,
+        opts.dialect,
+    )
+
+    if classification.risk == "safe":
         backend_writer.write(msg.raw)
         await backend_writer.drain()
         return
 
-    estimated_rows, estimate_error = await _estimate(classification, opts, state.database)
-    approved = await _confirm_and_decide(sql, classification, estimated_rows, estimate_error, "", opts)
+    estimated_rows, estimate_error = await _estimate(
+        classification,
+        opts,
+        state.database,
+    )
+
+    approved, decision = await _evaluate_and_decide(
+        sql=sql,
+        protocol="simple",
+        classification=classification,
+        estimated_rows=estimated_rows,
+        estimate_error=estimate_error,
+        approximate=False,
+        database=state.database,
+        opts=opts,
+    )
 
     if approved:
         backend_writer.write(msg.raw)
         await backend_writer.drain()
-    else:
-        client_writer.write(_blocked_error(classification, estimated_rows))
-        client_writer.write(build_ready_for_query("I"))
-        await client_writer.drain()
+        return
+
+    client_writer.write(
+        _blocked_error(
+            classification,
+            estimated_rows,
+            decision,
+        )
+    )
+
+    client_writer.write(
+        build_ready_for_query("I")
+    )
+
+    await client_writer.drain()
 
 
 async def _handle_execute(
-    msg: FrontendMessage, backend_writer: asyncio.StreamWriter,
-    client_writer: asyncio.StreamWriter, opts: ProxyOptions, state: ConnectionState,
+    msg: FrontendMessage,
+    backend_writer: asyncio.StreamWriter,
+    client_writer: asyncio.StreamWriter,
+    opts: ProxyOptions,
+    state: ConnectionState,
 ) -> None:
-    execute = parse_execute_message(msg.payload)
-    bind = state.portals.get(execute.portal_name)
+    """Handle PostgreSQL Extended Query Execute messages."""
+
+    execute = parse_execute_message(
+        msg.payload
+    )
+
+    bind: Optional[BindMessage] = state.portals.get(
+        execute.portal_name
+    )
 
     if bind is None:
-        # Unknown portal (e.g. a protocol sequence we don't recognize) - fail
-        # safe by forwarding rather than risking a hang, but log it since
-        # this represents a real gap worth tightening later.
-        print(f"[proxy] warning: Execute for unknown portal {execute.portal_name!r}, forwarding without a check")
+        await _handle_protocol_gap(
+            protocol="extended",
+            reason=(
+                "Execute referenced unknown portal "
+                f"{execute.portal_name!r}"
+            ),
+            sql="<unavailable>",
+            client_writer=client_writer,
+            backend_writer=backend_writer,
+            raw_message=msg.raw,
+            database=state.database,
+            opts=opts,
+        )
+        return
+
+    sql_template = state.prepared_statements.get(
+        bind.statement_name
+    )
+
+    if sql_template is None:
+        await _handle_protocol_gap(
+            protocol="extended",
+            reason=(
+                "Portal references unknown prepared statement "
+                f"{bind.statement_name!r}"
+            ),
+            sql="<unavailable>",
+            client_writer=client_writer,
+            backend_writer=backend_writer,
+            raw_message=msg.raw,
+            database=state.database,
+            opts=opts,
+        )
+        return
+
+    classification = classify(
+        sql_template,
+        opts.dialect,
+    )
+
+    if classification.risk == "safe":
         backend_writer.write(msg.raw)
         await backend_writer.drain()
         return
 
-    sql_template = state.prepared_statements.get(bind.statement_name, "")
-    classification = classify(sql_template, opts.dialect)
+    estimated_rows: Optional[int] = None
+    estimate_error: Optional[str] = None
+    approximate = False
 
-    if classification.risk != "risky":
-        backend_writer.write(msg.raw)
-        await backend_writer.drain()
-        return
-
-    estimated_rows = None
-    estimate_error = None
-    approx_note = ""
     if classification.preview_query:
-        decoded = [decode_param(v, fc) for v, fc in zip(bind.param_values, bind.format_codes)]
-        literal_query, any_heuristic = substitute_params(classification.preview_query, decoded)
+        decoded_parameters = [
+            decode_param(
+                value,
+                format_code,
+            )
+            for value, format_code in zip(
+                bind.param_values,
+                bind.format_codes,
+            )
+        ]
+
+        literal_query, used_heuristic = substitute_params(
+            classification.preview_query,
+            decoded_parameters,
+        )
+
         if literal_query is None:
-            estimate_error = "could not decode one or more bound parameters - showing query without a row estimate"
-        else:
-            if any_heuristic:
-                approx_note = ", approximate - decoded from binary protocol"
-            estimated_rows, estimate_error = await _estimate(
-                Classification(risk="risky", statement_type=classification.statement_type,
-                                reason=classification.reason, preview_query=literal_query),
-                opts, state.database,
+            estimate_error = (
+                "Could not decode one or more bound parameters"
             )
 
-    approved = await _confirm_and_decide(sql_template, classification, estimated_rows, estimate_error, approx_note, opts)
+        else:
+            approximate = used_heuristic
+
+            preview_classification = replace(
+                classification,
+                preview_query=literal_query,
+            )
+
+            estimated_rows, estimate_error = await _estimate(
+                preview_classification,
+                opts,
+                state.database,
+            )
+
+    approved, decision = await _evaluate_and_decide(
+        sql=sql_template,
+        protocol="extended",
+        classification=classification,
+        estimated_rows=estimated_rows,
+        estimate_error=estimate_error,
+        approximate=approximate,
+        database=state.database,
+        opts=opts,
+    )
 
     if approved:
         backend_writer.write(msg.raw)
         await backend_writer.drain()
-    else:
-        client_writer.write(_blocked_error(classification, estimated_rows))
-        # No ReadyForQuery here: the client will send its own Sync next, which we
-        # forward normally - the backend answers that Sync with ReadyForQuery itself,
-        # since we never actually put it in a mid-command state.
-        await client_writer.drain()
+        return
+
+    client_writer.write(
+        _blocked_error(
+            classification,
+            estimated_rows,
+            decision,
+        )
+    )
+
+    # The client will normally send Sync after Execute. The backend then
+    # returns ReadyForQuery, so we do not fabricate one in this path.
+    await client_writer.drain()
 
 
 async def _handle_frontend_message(
-    msg: FrontendMessage, backend_writer: asyncio.StreamWriter,
-    client_writer: asyncio.StreamWriter, opts: ProxyOptions, state: ConnectionState,
+    msg: FrontendMessage,
+    backend_writer: asyncio.StreamWriter,
+    client_writer: asyncio.StreamWriter,
+    opts: ProxyOptions,
+    state: ConnectionState,
 ) -> None:
+    """Route one framed PostgreSQL frontend message."""
+
     if msg.type == "Q":
-        await _handle_simple_query(msg, backend_writer, client_writer, opts, state)
+        await _handle_simple_query(
+            msg,
+            backend_writer,
+            client_writer,
+            opts,
+            state,
+        )
         return
 
-    if msg.type == "P":  # Parse - just record the statement text, harmless to forward immediately
-        parsed = parse_parse_message(msg.payload)
-        state.prepared_statements[parsed.statement_name] = parsed.query
+    if msg.type == "P":
+        parsed = parse_parse_message(
+            msg.payload
+        )
+
+        state.prepared_statements[
+            parsed.statement_name
+        ] = parsed.query
+
         backend_writer.write(msg.raw)
         await backend_writer.drain()
         return
 
-    if msg.type == "B":  # Bind - just record the portal's bound values, harmless to forward immediately
-        bind = parse_bind_message(msg.payload)
-        state.portals[bind.portal_name] = bind
+    if msg.type == "B":
+        bind = parse_bind_message(
+            msg.payload
+        )
+
+        state.portals[
+            bind.portal_name
+        ] = bind
+
         backend_writer.write(msg.raw)
         await backend_writer.drain()
         return
 
-    if msg.type == "E":  # Execute - this is where a query actually runs, so this is what we intercept
-        await _handle_execute(msg, backend_writer, client_writer, opts, state)
+    if msg.type == "E":
+        await _handle_execute(
+            msg,
+            backend_writer,
+            client_writer,
+            opts,
+            state,
+        )
         return
 
-    # Everything else (Describe, Flush, Sync, Close, Terminate, password/SASL
-    # messages, ...) carries no execution risk on its own - pass through.
+    # Describe, Flush, Sync, Close, Terminate and authentication messages
+    # do not directly execute SQL and are forwarded unchanged.
     backend_writer.write(msg.raw)
     await backend_writer.drain()
 
 
-async def _handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter, opts: ProxyOptions) -> None:
-    backend_reader = None
-    backend_writer = None
+async def _handle_client(
+    reader: asyncio.StreamReader,
+    writer: asyncio.StreamWriter,
+    opts: ProxyOptions,
+) -> None:
+    """Handle one connected PostgreSQL client."""
+
+    backend_reader: Optional[
+        asyncio.StreamReader
+    ] = None
+
+    backend_writer: Optional[
+        asyncio.StreamWriter
+    ] = None
+
     framer = FrontendFramer()
     state = ConnectionState()
     past_startup = False
@@ -235,40 +712,139 @@ async def _handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWri
     try:
         while True:
             chunk = await reader.read(65536)
+
             if not chunk:
                 break
 
             if not past_startup:
                 if is_negotiation_request(chunk):
-                    # We don't proxy TLS - tell the client "no SSL" and wait for the real StartupMessage.
+                    # The proxy currently does not terminate TLS.
                     writer.write(b"N")
                     await writer.drain()
                     continue
 
-                params = parse_startup_params(chunk)
-                state.database = params.get("database") or params.get("user") or "postgres"
-                backend_reader, backend_writer = await asyncio.open_connection(opts.target_host, opts.target_port)
-                backend_writer.write(chunk)  # forward the StartupMessage unchanged
+                params = parse_startup_params(
+                    chunk
+                )
+
+                state.database = (
+                    params.get("database")
+                    or params.get("user")
+                    or "postgres"
+                )
+
+                backend_reader, backend_writer = (
+                    await asyncio.open_connection(
+                        opts.target_host,
+                        opts.target_port,
+                    )
+                )
+
+                backend_writer.write(chunk)
                 await backend_writer.drain()
+
                 past_startup = True
-                asyncio.create_task(_pipe_raw(backend_reader, writer))  # backend responses pass straight through
+
+                asyncio.create_task(
+                    _pipe_raw(
+                        backend_reader,
+                        writer,
+                    )
+                )
+
                 continue
 
             messages = framer.push(chunk)
-            for msg in messages:
-                await _handle_frontend_message(msg, backend_writer, writer, opts, state)
-    except (ConnectionResetError, BrokenPipeError):
+
+            for message in messages:
+                if backend_writer is None:
+                    raise RuntimeError(
+                        "Backend connection is unavailable"
+                    )
+
+                await _handle_frontend_message(
+                    message,
+                    backend_writer,
+                    writer,
+                    opts,
+                    state,
+                )
+
+    except (
+        ConnectionResetError,
+        BrokenPipeError,
+    ):
         pass
+
+    except Exception as exc:
+        print(
+            "[proxy] client connection error: "
+            f"{exc}"
+        )
+
     finally:
         writer.close()
+
         if backend_writer:
             backend_writer.close()
 
 
-async def start_intercepting_proxy(opts: ProxyOptions) -> None:
+async def start_intercepting_proxy(
+    opts: ProxyOptions,
+) -> None:
+    """Start the PostgreSQL safety proxy."""
+
     server = await asyncio.start_server(
-        lambda r, w: _handle_client(r, w, opts), "127.0.0.1", opts.listen_port
+        lambda reader, writer: _handle_client(
+            reader,
+            writer,
+            opts,
+        ),
+        "127.0.0.1",
+        opts.listen_port,
     )
-    print(f"[proxy] listening on 127.0.0.1:{opts.listen_port}, protecting {opts.target_host}:{opts.target_port}")
+
+    print(
+        f"[proxy] listening on 127.0.0.1:{opts.listen_port}, "
+        f"protecting {opts.target_host}:{opts.target_port}"
+    )
+
+    print(
+        "[proxy] policy: "
+        f"auto_allow_max_rows="
+        f"{opts.policy_config.auto_allow_max_rows}, "
+        f"block_at_rows="
+        f"{opts.policy_config.block_at_rows}, "
+        f"no_where="
+        f"{opts.policy_config.no_where_action.value}, "
+        f"structural="
+        f"{opts.policy_config.structural_action.value}, "
+        f"unknown="
+        f"{opts.policy_config.unknown_action.value}, "
+        f"estimation_failure="
+        f"{opts.policy_config.estimation_failure_action.value}"
+    )
+
+    print(
+        "[proxy] fail-safe mode: "
+        f"{opts.fail_safe_mode.value}"
+    )
+
+    if opts.audit_logger is None:
+        print(
+            "[proxy] audit logging: disabled"
+        )
+    else:
+        status = (
+            "enabled"
+            if opts.audit_logger.enabled
+            else "disabled"
+        )
+
+        print(
+            f"[proxy] audit logging: {status}, "
+            f"path={opts.audit_logger.path}"
+        )
+
     async with server:
         await server.serve_forever()
