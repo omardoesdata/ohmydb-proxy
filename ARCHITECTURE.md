@@ -42,3 +42,7 @@ The classifier and confirmation UI remain shared.
 4. Add SQL Server TDS adapter.
 5. Add SQLite wrapper/CLI mode (there is no network wire proxy to intercept).
 6. Add IDE integrations and a local control-panel UI.
+
+## v0.3 fail-safe boundary
+
+Protocol execution that cannot be reconstructed is evaluated by `FailSafeMode`. Strict and balanced modes block unknown portals and missing prepared statements. Permissive mode forwards them only for compatibility troubleshooting and records the protocol gap in the audit log.

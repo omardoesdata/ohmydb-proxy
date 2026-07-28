@@ -1,142 +1,91 @@
-# SQL Safety Proxy — Python Prototype
+# SQL Safety Proxy
 
-A local PostgreSQL proxy that sits between a database client and the real
-server. Before a risky statement executes, it shows a native desktop popup
-explaining the risk and, when possible, the estimated number of affected rows.
-The query reaches PostgreSQL only after explicit approval.
+SQL Safety Proxy is a local PostgreSQL proxy that evaluates SQL before it
+reaches the real database. It classifies risk, estimates affected rows where
+possible, applies policy, requests confirmation when required, and writes an
+append-only audit record.
 
-## Current capabilities
+## v0.3 capabilities
 
-- PostgreSQL wire-protocol pass-through.
-- Simple Query protocol support.
-- Extended Query protocol support: `Parse → Bind → Execute`.
-- Parameterized statements from drivers such as `asyncpg`.
-- SQL classification using `sqlglot`.
-- Detection of `UPDATE`, `DELETE`, `DROP`, and `TRUNCATE` risks.
-- Safe `SELECT COUNT(*)` impact preview for eligible `UPDATE`/`DELETE` queries.
-- Native Tkinter popup with **Cancel query** as the safe default.
-- CLI confirmation fallback.
-- A denied query is not sent to the target database.
+- PostgreSQL Simple Query protocol.
+- PostgreSQL extended `Parse -> Bind -> Execute` protocol.
+- `UPDATE`, `DELETE`, `TRUNCATE`, `DROP`, `ALTER`, and `CREATE` classification.
+- Read-only row-impact estimation for eligible mutations.
+- Policy actions: `ALLOW`, `CONFIRM`, and `BLOCK`.
+- Severity levels: `LOW`, `MEDIUM`, `HIGH`, and `CRITICAL`.
+- Native Tkinter popup and CLI confirmation.
+- JSONL audit logging.
+- Fail-safe handling for unknown portals and missing prepared statements.
+- Python 3.11, 3.12, and 3.13 CI coverage.
 
-## Important prototype limitations
+## Installation
 
-This is not production-ready yet. Before public release, it still needs
-stronger protocol coverage, authentication/TLS design, transaction-state
-handling, multi-statement policy, broader SQL test fixtures, packaging, audit
-logging, and security review.
-
-Binary PostgreSQL parameters are decoded using best-effort heuristics when the
-exact type is unavailable. If a trustworthy estimate cannot be produced, the
-popup says the estimate is unavailable, but still requires confirmation.
-
-## Windows setup
-
-Use Python 3.11 or newer. Standard Windows Python installations normally include
-Tkinter.
-
-```bat
-cd sql_safety_proxy_py
+```powershell
+git clone https://github.com/omardoesdata/sql-safety-proxy
+cd sql-safety-proxy
 python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -e ".[dev]"
 ```
 
-Configure the target database and the proxy's read-only estimator account:
+## Configuration
 
-```bat
-set DB_HOST=127.0.0.1
-set DB_PORT=5432
-set PROXY_PORT=5433
-set ESTIMATOR_USER=sql_safety_estimator
-set ESTIMATOR_PASSWORD=your_read_only_password
-set CONFIRMATION_MODE=popup
+```powershell
+$env:DB_HOST = "127.0.0.1"
+$env:DB_PORT = "5432"
+$env:PROXY_PORT = "5433"
+
+$env:ESTIMATOR_USER = "postgres"
+$env:ESTIMATOR_PASSWORD = "postgres"
+$env:DATABASE_ENGINE = "postgres"
+$env:SQL_DIALECT = "postgres"
+$env:ESTIMATE_TIMEOUT_SECONDS = "8"
+
+$env:CONFIRMATION_MODE = "popup"
+
+$env:POLICY_AUTO_ALLOW_MAX_ROWS = "5"
+$env:POLICY_BLOCK_AT_ROWS = "100"
+$env:POLICY_NO_WHERE_ACTION = "BLOCK"
+$env:POLICY_STRUCTURAL_ACTION = "CONFIRM"
+$env:POLICY_UNKNOWN_ACTION = "CONFIRM"
+$env:POLICY_ESTIMATION_FAILURE_ACTION = "CONFIRM"
+
+$env:FAIL_SAFE_MODE = "balanced"
+
+$env:AUDIT_ENABLED = "true"
+$env:AUDIT_LOG_PATH = "logs\sql-safety-audit.jsonl"
+```
+
+Start the proxy:
+
+```powershell
 python main.py
 ```
 
-You may also double-click `start_proxy.bat` after setting the environment
-variables permanently or editing the batch file for local development.
+Point the PostgreSQL client to `127.0.0.1:5433`.
 
-Point your database client to:
+## Fail-safe modes
 
-- Host: `127.0.0.1`
-- Port: `5433`
-- Database/user/password: the same values normally used for PostgreSQL
+- `strict`: blocks SQL execution when the proxy cannot reconstruct it.
+- `balanced`: default; blocks protocol gaps while retaining normal policy
+  confirmation for unsupported or unparseable SQL.
+- `permissive`: forwards protocol gaps for compatibility troubleshooting and
+  records them in the audit log.
 
-The proxy itself uses `ESTIMATOR_USER` only for read-only preview queries.
-Never give that account mutation or administrative privileges.
+Unknown portals and missing prepared statements are protocol gaps. In
+`strict` and `balanced` modes they are blocked instead of being silently
+forwarded.
 
-## Test a blocked query
-
-```bat
-python test_query.py "UPDATE users SET active = false;"
-```
-
-A popup should appear. Choose **Cancel query**. The client should receive a
-blocked-query error and the database should remain unchanged.
-
-## Confirmation modes
-
-Native popup, which is now the default:
-
-```bat
-set CONFIRMATION_MODE=popup
-```
-
-Terminal prompt fallback:
-
-```bat
-set CONFIRMATION_MODE=cli
-```
-
-## Project structure
-
-- `main.py` — environment configuration and startup.
-- `sql_safety_proxy/proxy.py` — connection interception and policy flow.
-- `sql_safety_proxy/pg_protocol.py` — PostgreSQL message framing.
-- `sql_safety_proxy/extended_protocol.py` — Parse/Bind/Execute state.
-- `sql_safety_proxy/param_decoder.py` — bound-parameter decoding.
-- `sql_safety_proxy/sql_classifier.py` — AST-based risk classification.
-- `sql_safety_proxy/risk_estimator.py` — read-only impact estimate.
-- `sql_safety_proxy/confirmation.py` — confirmation interface and CLI mode.
-- `sql_safety_proxy/popup_confirmation.py` — native desktop popup.
-- `tests/` — focused local tests.
-
-## Run local popup integration tests
-
-```bat
-python -m unittest discover -s tests -v
-```
-
-These tests verify that the blocking Tkinter dialog runs outside the asyncio
-event loop and that multiple popup requests are serialized.
-
-## v0.2 impact estimation fix
-
-`UPDATE`, `DELETE`, and `TRUNCATE` without a `WHERE` clause now generate a
-read-only full-table preview (`SELECT COUNT(*) FROM ...`). The popup therefore
-shows the number of rows in the target table instead of `unavailable` whenever
-the estimator account can read that table.
-
-New settings:
+## Tests
 
 ```powershell
-$env:DATABASE_ENGINE = "postgres"
-$env:ESTIMATE_TIMEOUT_SECONDS = "8"
+python -m compileall sql_safety_proxy
+python -m pytest -v
 ```
 
-The estimator connection runs inside a read-only transaction. If the count
-cannot be obtained, the query still requires confirmation and the popup shows
-the actual estimator error rather than silently skipping protection.
+## Current limitations
 
-## Multi-database architecture
-
-The SQL classifier and popup are database-independent. Database-specific impact
-execution is behind the `ImpactEstimator` interface in
-`sql_safety_proxy/risk_estimator.py`. PostgreSQL is the first adapter.
-
-Full support for another database requires two plugins:
-
-1. A wire/interception adapter for that database protocol.
-2. An impact-estimator adapter that executes read-only preview SQL.
-
-Planned adapters: MySQL/MariaDB, SQL Server, SQLite/local mode, and Oracle.
+This is an alpha release. It does not terminate PostgreSQL TLS, fully track
+transaction state, decode every binary parameter type, or support non-PostgreSQL
+wire protocols. Use a least-privilege estimator account.

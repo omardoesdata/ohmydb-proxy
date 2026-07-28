@@ -1,4 +1,4 @@
-﻿"""PostgreSQL wire proxy with classification, estimation, policy control,
+"""PostgreSQL wire proxy with classification, estimation, policy control,
 confirmation, and JSONL audit logging.
 
 Supported PostgreSQL client execution paths:
@@ -29,6 +29,11 @@ from .extended_protocol import (
     parse_execute_message,
     parse_parse_message,
 )
+from .fail_safe import (
+    FailSafeMode,
+    ProtocolGapAction,
+    evaluate_protocol_gap,
+)
 from .param_decoder import decode_param
 from .pg_protocol import (
     FrontendFramer,
@@ -43,6 +48,7 @@ from .policy import (
     PolicyAction,
     PolicyConfig,
     PolicyDecision,
+    Severity,
     evaluate_policy,
 )
 from .preview_builder import substitute_params
@@ -76,6 +82,7 @@ class ProxyOptions:
     )
 
     audit_logger: Optional[JsonlAuditLogger] = None
+    fail_safe_mode: FailSafeMode = FailSafeMode.BALANCED
 
 
 @dataclass
@@ -199,6 +206,11 @@ async def _write_audit_event(
     opts: ProxyOptions,
 ) -> None:
     """Append the final safety decision to the configured audit log."""
+
+    print(
+        "[proxy] fail-safe mode: "
+        f"{opts.fail_safe_mode.value}"
+    )
 
     if opts.audit_logger is None:
         return
@@ -341,6 +353,90 @@ def _blocked_error(
     )
 
 
+async def _handle_protocol_gap(
+    *,
+    protocol: str,
+    reason: str,
+    sql: str,
+    client_writer: asyncio.StreamWriter,
+    backend_writer: asyncio.StreamWriter,
+    raw_message: bytes,
+    database: str,
+    opts: ProxyOptions,
+) -> bool:
+    """Handle SQL execution that cannot be reconstructed safely.
+
+    Returns True when the original message was forwarded.
+    """
+
+    gap_decision = evaluate_protocol_gap(
+        opts.fail_safe_mode,
+        reason,
+    )
+
+    classification = Classification(
+        risk="unknown",
+        statement_type="PROTOCOL_GAP",
+        reason=reason,
+        impact_kind="protocol",
+        severity=Severity.CRITICAL,
+    )
+
+    policy_decision = PolicyDecision(
+        action=(
+            PolicyAction.ALLOW
+            if gap_decision.action == ProtocolGapAction.ALLOW
+            else PolicyAction.BLOCK
+        ),
+        severity=classification.severity,
+        reason=gap_decision.reason,
+    )
+
+    forwarded = gap_decision.action == ProtocolGapAction.ALLOW
+    final_decision = (
+        "ALLOWED_PROTOCOL_GAP"
+        if forwarded
+        else "BLOCKED_PROTOCOL_GAP"
+    )
+
+    _print_policy_result(
+        sql=sql,
+        classification=classification,
+        decision=policy_decision,
+        estimated_rows=None,
+        approximate=False,
+        protocol=protocol,
+    )
+
+    await _write_audit_event(
+        sql=sql,
+        protocol=protocol,
+        classification=classification,
+        decision=policy_decision,
+        final_decision=final_decision,
+        estimated_rows=None,
+        estimate_error=reason,
+        approximate=False,
+        database=database,
+        opts=opts,
+    )
+
+    if forwarded:
+        backend_writer.write(raw_message)
+        await backend_writer.drain()
+        return True
+
+    client_writer.write(
+        build_error_response(
+            "Query blocked by sql-safety-proxy. "
+            f"Protocol gap: {gap_decision.reason}.",
+            sql_state="0A000",
+        )
+    )
+    await client_writer.drain()
+    return False
+
+
 async def _handle_simple_query(
     msg: FrontendMessage,
     backend_writer: asyncio.StreamWriter,
@@ -419,20 +515,40 @@ async def _handle_execute(
     )
 
     if bind is None:
-        print(
-            "[proxy] warning: Execute received for unknown portal "
-            f"{execute.portal_name!r}; forwarding because no SQL "
-            "statement is available to classify"
+        await _handle_protocol_gap(
+            protocol="extended",
+            reason=(
+                "Execute referenced unknown portal "
+                f"{execute.portal_name!r}"
+            ),
+            sql="<unavailable>",
+            client_writer=client_writer,
+            backend_writer=backend_writer,
+            raw_message=msg.raw,
+            database=state.database,
+            opts=opts,
         )
-
-        backend_writer.write(msg.raw)
-        await backend_writer.drain()
         return
 
     sql_template = state.prepared_statements.get(
-        bind.statement_name,
-        "",
+        bind.statement_name
     )
+
+    if sql_template is None:
+        await _handle_protocol_gap(
+            protocol="extended",
+            reason=(
+                "Portal references unknown prepared statement "
+                f"{bind.statement_name!r}"
+            ),
+            sql="<unavailable>",
+            client_writer=client_writer,
+            backend_writer=backend_writer,
+            raw_message=msg.raw,
+            database=state.database,
+            opts=opts,
+        )
+        return
 
     classification = classify(
         sql_template,
@@ -707,6 +823,11 @@ async def start_intercepting_proxy(
         f"{opts.policy_config.unknown_action.value}, "
         f"estimation_failure="
         f"{opts.policy_config.estimation_failure_action.value}"
+    )
+
+    print(
+        "[proxy] fail-safe mode: "
+        f"{opts.fail_safe_mode.value}"
     )
 
     if opts.audit_logger is None:
