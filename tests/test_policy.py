@@ -1,4 +1,4 @@
-﻿import pytest
+import pytest
 
 from sql_safety_proxy.policy import (
     PolicyAction,
@@ -154,3 +154,26 @@ def test_invalid_threshold_configuration_fails():
             auto_allow_max_rows=100,
             block_at_rows=100,
         )
+
+
+def test_multi_statement_is_blocked_by_default():
+    classification = classify("SELECT 1; DELETE FROM users;")
+    decision = evaluate_policy(
+        classification,
+        estimated_rows=None,
+        estimate_error=None,
+        config=PolicyConfig(),
+    )
+    assert decision.action == PolicyAction.BLOCK
+    assert decision.severity == Severity.CRITICAL
+
+
+def test_multi_statement_policy_can_require_confirmation():
+    classification = classify("SELECT 1; UPDATE users SET active = false;")
+    decision = evaluate_policy(
+        classification,
+        estimated_rows=None,
+        estimate_error=None,
+        config=PolicyConfig(multi_statement_action=PolicyAction.CONFIRM),
+    )
+    assert decision.action == PolicyAction.CONFIRM

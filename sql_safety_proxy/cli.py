@@ -95,6 +95,10 @@ def build_policy_config() -> PolicyConfig:
             "POLICY_ESTIMATION_FAILURE_ACTION",
             PolicyAction.CONFIRM,
         ),
+        multi_statement_action=read_policy_action(
+            "POLICY_MULTI_STATEMENT_ACTION",
+            PolicyAction.BLOCK,
+        ),
     )
 
 

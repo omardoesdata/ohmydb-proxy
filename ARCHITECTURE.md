@@ -46,3 +46,21 @@ The classifier and confirmation UI remain shared.
 ## v0.3 fail-safe boundary
 
 Protocol execution that cannot be reconstructed is evaluated by `FailSafeMode`. Strict and balanced modes block unknown portals and missing prepared statements. Permissive mode forwards them only for compatibility troubleshooting and records the protocol gap in the audit log.
+
+## v0.4 PostgreSQL hardening boundary
+
+The PostgreSQL adapter now maintains per-connection state for prepared
+statements, portals, extended-protocol recovery, and the backend transaction
+status reported by `ReadyForQuery` (`I`, `T`, or `E`). `Close` messages remove
+local statement or portal state, and statement closure also invalidates
+dependent portals.
+
+A proxy-generated extended-protocol error enters recovery mode. Frontend
+messages are ignored until `Sync`, matching PostgreSQL's error-recovery model.
+Malformed message payloads are converted into fail-safe protocol-gap decisions,
+while invalid frame lengths terminate the unsafe client stream with protocol
+violation SQLSTATE `08P01`.
+
+Simple Query batches are parsed as a full list rather than only the first AST.
+More than one statement is classified as `MULTI_STATEMENT` and evaluated by a
+dedicated policy setting.

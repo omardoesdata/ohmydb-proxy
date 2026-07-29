@@ -26,6 +26,7 @@ from .confirmation import ConfirmationProvider, QueryContext
 from .extended_protocol import (
     BindMessage,
     parse_bind_message,
+    parse_close_message,
     parse_execute_message,
     parse_parse_message,
 )
@@ -36,11 +37,14 @@ from .fail_safe import (
 )
 from .param_decoder import decode_param
 from .pg_protocol import (
+    BackendFramer,
     FrontendFramer,
     FrontendMessage,
+    ProtocolMessageError,
     build_error_response,
     build_ready_for_query,
     is_negotiation_request,
+    parse_ready_for_query_status,
     parse_simple_query_text,
     parse_startup_params,
 )
@@ -88,40 +92,70 @@ class ProxyOptions:
 @dataclass
 class ConnectionState:
     database: str = "postgres"
+    transaction_status: str = "I"
+    extended_error_pending: bool = False
 
-    # Prepared statement name -> SQL template.
-    prepared_statements: dict[str, str] = field(
-        default_factory=dict
-    )
+    prepared_statements: dict[str, str] = field(default_factory=dict)
+    portals: dict[str, BindMessage] = field(default_factory=dict)
 
-    # Portal name -> parsed Bind message.
-    portals: dict[str, BindMessage] = field(
-        default_factory=dict
-    )
+    def register_statement(self, name: str, query: str) -> None:
+        if name == "":
+            self.portals = {
+                portal_name: bind
+                for portal_name, bind in self.portals.items()
+                if bind.statement_name != ""
+            }
+        self.prepared_statements[name] = query
+
+    def register_portal(self, bind: BindMessage) -> None:
+        self.portals[bind.portal_name] = bind
+
+    def close_statement(self, name: str) -> None:
+        self.prepared_statements.pop(name, None)
+        self.portals = {
+            portal_name: bind
+            for portal_name, bind in self.portals.items()
+            if bind.statement_name != name
+        }
+
+    def close_portal(self, name: str) -> None:
+        self.portals.pop(name, None)
+
+    def update_transaction_status(self, status: str) -> None:
+        self.transaction_status = status
+        if status == "I":
+            self.portals.clear()
 
 
-async def _pipe_raw(
+async def _pipe_backend(
     reader: asyncio.StreamReader,
     writer: asyncio.StreamWriter,
+    state: ConnectionState,
 ) -> None:
-    """Forward backend PostgreSQL responses to the connected client."""
+    """Forward backend responses while tracking transaction state."""
 
+    framer = BackendFramer()
     try:
         while True:
             chunk = await reader.read(65536)
-
             if not chunk:
                 break
+
+            try:
+                messages = framer.push(chunk)
+                for message in messages:
+                    if message.type == "Z":
+                        state.update_transaction_status(
+                            parse_ready_for_query_status(message.payload)
+                        )
+            except ProtocolMessageError as exc:
+                print(f"[proxy] backend protocol warning: {exc}")
 
             writer.write(chunk)
             await writer.drain()
 
-    except (
-        ConnectionResetError,
-        BrokenPipeError,
-    ):
+    except (ConnectionResetError, BrokenPipeError):
         pass
-
     finally:
         writer.close()
 
@@ -206,11 +240,6 @@ async def _write_audit_event(
     opts: ProxyOptions,
 ) -> None:
     """Append the final safety decision to the configured audit log."""
-
-    print(
-        "[proxy] fail-safe mode: "
-        f"{opts.fail_safe_mode.value}"
-    )
 
     if opts.audit_logger is None:
         return
@@ -363,6 +392,8 @@ async def _handle_protocol_gap(
     raw_message: bytes,
     database: str,
     opts: ProxyOptions,
+    state: ConnectionState | None = None,
+    extended_recovery: bool = False,
 ) -> bool:
     """Handle SQL execution that cannot be reconstructed safely.
 
@@ -433,6 +464,10 @@ async def _handle_protocol_gap(
             sql_state="0A000",
         )
     )
+    if state is not None and extended_recovery:
+        state.extended_error_pending = True
+    elif state is not None:
+        client_writer.write(build_ready_for_query(state.transaction_status))
     await client_writer.drain()
     return False
 
@@ -491,7 +526,7 @@ async def _handle_simple_query(
     )
 
     client_writer.write(
-        build_ready_for_query("I")
+        build_ready_for_query(state.transaction_status)
     )
 
     await client_writer.drain()
@@ -527,6 +562,8 @@ async def _handle_execute(
             raw_message=msg.raw,
             database=state.database,
             opts=opts,
+            state=state,
+            extended_recovery=True,
         )
         return
 
@@ -547,6 +584,8 @@ async def _handle_execute(
             raw_message=msg.raw,
             database=state.database,
             opts=opts,
+            state=state,
+            extended_recovery=True,
         )
         return
 
@@ -623,6 +662,7 @@ async def _handle_execute(
             decision,
         )
     )
+    state.extended_error_pending = True
 
     # The client will normally send Sync after Execute. The backend then
     # returns ReadyForQuery, so we do not fabricate one in this path.
@@ -638,56 +678,66 @@ async def _handle_frontend_message(
 ) -> None:
     """Route one framed PostgreSQL frontend message."""
 
-    if msg.type == "Q":
-        await _handle_simple_query(
-            msg,
-            backend_writer,
-            client_writer,
-            opts,
-            state,
-        )
+    if state.extended_error_pending:
+        if msg.type == "S":
+            backend_writer.write(msg.raw)
+            await backend_writer.drain()
+            state.extended_error_pending = False
+        elif msg.type == "X":
+            backend_writer.write(msg.raw)
+            await backend_writer.drain()
+        # PostgreSQL ignores extended-protocol messages until Sync after error.
         return
 
-    if msg.type == "P":
-        parsed = parse_parse_message(
-            msg.payload
-        )
+    try:
+        if msg.type == "Q":
+            await _handle_simple_query(msg, backend_writer, client_writer, opts, state)
+            return
 
-        state.prepared_statements[
-            parsed.statement_name
-        ] = parsed.query
+        if msg.type == "P":
+            parsed = parse_parse_message(msg.payload)
+            state.register_statement(parsed.statement_name, parsed.query)
+            backend_writer.write(msg.raw)
+            await backend_writer.drain()
+            return
+
+        if msg.type == "B":
+            bind = parse_bind_message(msg.payload)
+            state.register_portal(bind)
+            backend_writer.write(msg.raw)
+            await backend_writer.drain()
+            return
+
+        if msg.type == "E":
+            await _handle_execute(msg, backend_writer, client_writer, opts, state)
+            return
+
+        if msg.type == "C":
+            close = parse_close_message(msg.payload)
+            if close.target_type == "S":
+                state.close_statement(close.name)
+            else:
+                state.close_portal(close.name)
+            backend_writer.write(msg.raw)
+            await backend_writer.drain()
+            return
 
         backend_writer.write(msg.raw)
         await backend_writer.drain()
-        return
 
-    if msg.type == "B":
-        bind = parse_bind_message(
-            msg.payload
+    except ProtocolMessageError as exc:
+        await _handle_protocol_gap(
+            protocol="simple" if msg.type == "Q" else "extended",
+            reason=f"Malformed frontend message {msg.type!r}: {exc}",
+            sql="<unavailable>",
+            client_writer=client_writer,
+            backend_writer=backend_writer,
+            raw_message=msg.raw,
+            database=state.database,
+            opts=opts,
+            state=state,
+            extended_recovery=msg.type != "Q",
         )
-
-        state.portals[
-            bind.portal_name
-        ] = bind
-
-        backend_writer.write(msg.raw)
-        await backend_writer.drain()
-        return
-
-    if msg.type == "E":
-        await _handle_execute(
-            msg,
-            backend_writer,
-            client_writer,
-            opts,
-            state,
-        )
-        return
-
-    # Describe, Flush, Sync, Close, Terminate and authentication messages
-    # do not directly execute SQL and are forwarded unchanged.
-    backend_writer.write(msg.raw)
-    await backend_writer.drain()
 
 
 async def _handle_client(
@@ -746,15 +796,26 @@ async def _handle_client(
                 past_startup = True
 
                 asyncio.create_task(
-                    _pipe_raw(
+                    _pipe_backend(
                         backend_reader,
                         writer,
+                        state,
                     )
                 )
 
                 continue
 
-            messages = framer.push(chunk)
+            try:
+                messages = framer.push(chunk)
+            except ProtocolMessageError as exc:
+                writer.write(
+                    build_error_response(
+                        f"Malformed PostgreSQL frontend frame: {exc}",
+                        sql_state="08P01",
+                    )
+                )
+                await writer.drain()
+                break
 
             for message in messages:
                 if backend_writer is None:
@@ -822,7 +883,9 @@ async def start_intercepting_proxy(
         f"unknown="
         f"{opts.policy_config.unknown_action.value}, "
         f"estimation_failure="
-        f"{opts.policy_config.estimation_failure_action.value}"
+        f"{opts.policy_config.estimation_failure_action.value}, "
+        f"multi_statement="
+        f"{opts.policy_config.multi_statement_action.value}"
     )
 
     print(

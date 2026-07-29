@@ -1,4 +1,4 @@
-﻿"""Configurable safety policy for classified SQL statements."""
+"""Configurable safety policy for classified SQL statements."""
 
 from __future__ import annotations
 
@@ -34,6 +34,7 @@ class PolicyConfig:
     structural_action: PolicyAction = PolicyAction.CONFIRM
     unknown_action: PolicyAction = PolicyAction.CONFIRM
     estimation_failure_action: PolicyAction = PolicyAction.CONFIRM
+    multi_statement_action: PolicyAction = PolicyAction.BLOCK
 
     def __post_init__(self) -> None:
         if self.auto_allow_max_rows < 0:
@@ -67,6 +68,17 @@ def evaluate_policy(
             severity=Severity.LOW,
             reason="Read-only statement",
             estimated_rows=estimated_rows,
+        )
+
+    if classification.impact_kind == "batch":
+        return PolicyDecision(
+            action=config.multi_statement_action,
+            severity=Severity.CRITICAL,
+            reason=(
+                f"The request contains {classification.statement_count} SQL "
+                "statements; the multi-statement policy was applied"
+            ),
+            estimated_rows=None,
         )
 
     if classification.risk == "unknown":
