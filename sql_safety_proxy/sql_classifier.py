@@ -1,4 +1,4 @@
-﻿"""Dialect-aware SQL classification and read-only impact previews."""
+"""Dialect-aware SQL classification and read-only impact previews."""
 
 from __future__ import annotations
 
@@ -25,6 +25,7 @@ class Classification:
     target_table: Optional[str] = None
     has_where: Optional[bool] = None
     severity: Severity = Severity.HIGH
+    statement_count: int = 1
 
 
 def classify(
@@ -32,14 +33,43 @@ def classify(
     dialect: Dialect = "postgres",
 ) -> Classification:
     try:
-        ast = sqlglot.parse_one(sql, read=dialect)
+        statements = [
+            statement
+            for statement in sqlglot.parse(sql, read=dialect)
+            if statement is not None
+        ]
     except Exception as exc:
         return Classification(
             risk="unknown",
             statement_type="UNPARSEABLE",
             reason=f"Could not parse SQL safely: {exc}",
             severity=Severity.HIGH,
+            statement_count=0,
         )
+
+    if not statements:
+        return Classification(
+            risk="unknown",
+            statement_type="EMPTY",
+            reason="No SQL statement was found",
+            severity=Severity.HIGH,
+            statement_count=0,
+        )
+
+    if len(statements) > 1:
+        return Classification(
+            risk="risky",
+            statement_type="MULTI_STATEMENT",
+            reason=(
+                f"The request contains {len(statements)} SQL statements; "
+                "batch execution requires a dedicated policy decision"
+            ),
+            impact_kind="batch",
+            severity=Severity.CRITICAL,
+            statement_count=len(statements),
+        )
+
+    ast = statements[0]
 
     if isinstance(ast, exp.Select):
         return Classification(
@@ -51,21 +81,11 @@ def classify(
         )
 
     if isinstance(ast, (exp.Update, exp.Delete)):
-        statement_type = (
-            "UPDATE"
-            if isinstance(ast, exp.Update)
-            else "DELETE"
-        )
-
+        statement_type = "UPDATE" if isinstance(ast, exp.Update) else "DELETE"
         table = ast.find(exp.Table)
         where = ast.find(exp.Where)
-
         target_table = _table_name(table)
-        preview_query = _build_count_query(
-            ast,
-            where,
-            dialect,
-        )
+        preview_query = _build_count_query(ast, where, dialect)
 
         if where is None:
             return Classification(
@@ -98,15 +118,10 @@ def classify(
 
     if isinstance(ast, exp.TruncateTable):
         table = ast.find(exp.Table)
-
         preview = (
-            exp.select("COUNT(*)")
-            .from_(table.copy())
-            .sql(dialect=dialect)
-            if table
-            else None
+            exp.select("COUNT(*)").from_(table.copy()).sql(dialect=dialect)
+            if table else None
         )
-
         return Classification(
             risk="risky",
             statement_type="TRUNCATE",
@@ -120,13 +135,10 @@ def classify(
 
     if isinstance(ast, exp.Drop):
         table = ast.find(exp.Table)
-
         return Classification(
             risk="risky",
             statement_type="DROP",
-            reason=(
-                "DROP is a structural and potentially irreversible change"
-            ),
+            reason="DROP is a structural and potentially irreversible change",
             impact_kind="schema",
             target_table=_table_name(table),
             severity=Severity.CRITICAL,
@@ -134,7 +146,6 @@ def classify(
 
     if isinstance(ast, exp.Alter):
         table = ast.find(exp.Table)
-
         return Classification(
             risk="risky",
             statement_type="ALTER",
@@ -146,7 +157,6 @@ def classify(
 
     if isinstance(ast, exp.Create):
         table = ast.find(exp.Table)
-
         return Classification(
             risk="risky",
             statement_type="CREATE",
@@ -159,12 +169,9 @@ def classify(
     return Classification(
         risk="unknown",
         statement_type=type(ast).__name__.upper(),
-        reason=(
-            "Statement type is not yet covered by a dedicated safety rule"
-        ),
+        reason="Statement type is not yet covered by a dedicated safety rule",
         severity=Severity.HIGH,
     )
-
 
 def _table_name(
     table: Optional[exp.Table],

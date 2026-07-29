@@ -5,17 +5,20 @@ reaches the real database. It classifies risk, estimates affected rows where
 possible, applies policy, requests confirmation when required, and writes an
 append-only audit record.
 
-## v0.3 capabilities
+## v0.4 capabilities
 
 - PostgreSQL Simple Query protocol.
 - PostgreSQL extended `Parse -> Bind -> Execute` protocol.
-- `UPDATE`, `DELETE`, `TRUNCATE`, `DROP`, `ALTER`, and `CREATE` classification.
+- Transaction state tracking from backend `ReadyForQuery` messages.
+- Correct blocked-query responses for idle, active, and failed transactions.
+- Prepared-statement and portal lifecycle tracking, including `Close`.
+- Extended-query recovery that discards messages until `Sync` after a block.
+- Strict validation of Parse, Bind, Execute, Close, startup, and frame payloads.
+- Multi-statement batch detection with a dedicated policy action.
 - Read-only row-impact estimation for eligible mutations.
 - Policy actions: `ALLOW`, `CONFIRM`, and `BLOCK`.
-- Severity levels: `LOW`, `MEDIUM`, `HIGH`, and `CRITICAL`.
 - Native Tkinter popup and CLI confirmation.
-- JSONL audit logging.
-- Fail-safe handling for unknown portals and missing prepared statements.
+- JSONL audit logging and fail-safe protocol-gap handling.
 - Python 3.11, 3.12, and 3.13 CI coverage.
 
 ## Installation
@@ -50,6 +53,7 @@ $env:POLICY_NO_WHERE_ACTION = "BLOCK"
 $env:POLICY_STRUCTURAL_ACTION = "CONFIRM"
 $env:POLICY_UNKNOWN_ACTION = "CONFIRM"
 $env:POLICY_ESTIMATION_FAILURE_ACTION = "CONFIRM"
+$env:POLICY_MULTI_STATEMENT_ACTION = "BLOCK"
 
 $env:FAIL_SAFE_MODE = "balanced"
 
@@ -65,6 +69,30 @@ python main.py
 
 Point the PostgreSQL client to `127.0.0.1:5433`.
 
+## Transaction and extended-query behavior
+
+The proxy observes PostgreSQL `ReadyForQuery` status values:
+
+- `I`: idle, outside a transaction.
+- `T`: inside a valid transaction.
+- `E`: inside a failed transaction.
+
+When a Simple Query is blocked, the synthetic response preserves the current
+transaction status instead of always claiming the connection is idle. When an
+extended-protocol Execute is blocked, the proxy follows PostgreSQL recovery
+semantics: subsequent extended messages are discarded until the client sends
+`Sync`, which is forwarded to the backend.
+
+## Multi-statement requests
+
+Simple Query requests containing more than one parsed SQL statement are marked
+`MULTI_STATEMENT`. They are blocked by default because a single batch can mix
+read-only and destructive operations. Configure the behavior with:
+
+```powershell
+$env:POLICY_MULTI_STATEMENT_ACTION = "BLOCK" # ALLOW, CONFIRM, or BLOCK
+```
+
 ## Fail-safe modes
 
 - `strict`: blocks SQL execution when the proxy cannot reconstruct it.
@@ -73,19 +101,17 @@ Point the PostgreSQL client to `127.0.0.1:5433`.
 - `permissive`: forwards protocol gaps for compatibility troubleshooting and
   records them in the audit log.
 
-Unknown portals and missing prepared statements are protocol gaps. In
-`strict` and `balanced` modes they are blocked instead of being silently
-forwarded.
-
-## Tests
+## Tests and package build
 
 ```powershell
 python -m compileall sql_safety_proxy
 python -m pytest -v
+python -m build
 ```
 
 ## Current limitations
 
-This is an alpha release. It does not terminate PostgreSQL TLS, fully track
-transaction state, decode every binary parameter type, or support non-PostgreSQL
-wire protocols. Use a least-privilege estimator account.
+This is an alpha release. It does not terminate PostgreSQL TLS, decode every
+binary parameter type, or support non-PostgreSQL wire protocols. Transaction
+status is tracked, but v0.4 is not yet a substitute for database permissions,
+backups, transaction discipline, or production change controls.
