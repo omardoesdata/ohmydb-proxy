@@ -56,10 +56,8 @@ from .policy import (
     evaluate_policy,
 )
 from .preview_builder import substitute_params
-from .risk_estimator import (
-    DbConnectionOptions,
-    estimate_affected_rows,
-)
+from .adapters.registry import get_adapter
+from .risk_estimator import DbConnectionOptions
 from .sql_classifier import (
     Classification,
     Dialect,
@@ -79,6 +77,7 @@ class ProxyOptions:
     confirmation_provider: ConfirmationProvider
 
     database_engine: str = "postgres"
+    adapter_name: str = "postgres"
     estimate_timeout_seconds: float = 8.0
 
     policy_config: PolicyConfig = field(
@@ -185,10 +184,10 @@ async def _estimate(
             timeout_seconds=opts.estimate_timeout_seconds,
         )
 
-        rows = await estimate_affected_rows(
+        adapter = get_adapter(opts.adapter_name)
+        rows = await adapter.estimate_rows(
             classification.preview_query,
             db_options,
-            engine=opts.database_engine,
         )
 
         return rows, None
@@ -850,10 +849,10 @@ async def _handle_client(
             backend_writer.close()
 
 
-async def start_intercepting_proxy(
+async def start_postgres_proxy(
     opts: ProxyOptions,
 ) -> None:
-    """Start the PostgreSQL safety proxy."""
+    """Start the PostgreSQL protocol runtime."""
 
     server = await asyncio.start_server(
         lambda reader, writer: _handle_client(
@@ -911,3 +910,28 @@ async def start_intercepting_proxy(
 
     async with server:
         await server.serve_forever()
+
+
+
+async def start_intercepting_proxy(
+    opts: ProxyOptions,
+) -> None:
+    """Resolve and start the configured database adapter."""
+
+    adapter = get_adapter(opts.adapter_name)
+    adapter.validate_runtime(opts)
+
+    if opts.dialect != adapter.dialect:
+        raise ValueError(
+            f"Configured SQL dialect {opts.dialect!r} "
+            f"does not match adapter {adapter.name!r} "
+            f"dialect {adapter.dialect!r}"
+        )
+
+    print(
+        f"[proxy] adapter: {adapter.name} "
+        f"({adapter.display_name}), capabilities="
+        f"{adapter.capabilities.as_dict()}"
+    )
+
+    await adapter.start_proxy(opts)

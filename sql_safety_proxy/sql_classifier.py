@@ -71,6 +71,26 @@ def classify(
 
     ast = statements[0]
 
+    statement_class = type(ast).__name__.upper()
+
+    # Transaction-control statements do not directly mutate rows or schema.
+    # They must be forwarded so clients can begin, commit, roll back, and
+    # recover transactions through the proxy.
+    if statement_class in {
+        "TRANSACTION",
+        "COMMIT",
+        "ROLLBACK",
+        "SAVEPOINT",
+        "RELEASE",
+    }:
+        return Classification(
+            risk="safe",
+            statement_type=statement_class,
+            reason="Transaction-control statement",
+            impact_kind="transaction",
+            severity=Severity.LOW,
+        )
+
     if isinstance(ast, exp.Select):
         return Classification(
             risk="safe",

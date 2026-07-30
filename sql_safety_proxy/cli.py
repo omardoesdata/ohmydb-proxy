@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 
+from .adapters.registry import get_adapter, resolve_adapter_name
 from .audit import JsonlAuditLogger
 from .confirmation import CliConfirmationProvider
 from .fail_safe import FailSafeMode
@@ -113,17 +114,57 @@ def build_audit_logger() -> JsonlAuditLogger:
 
 
 def build_options() -> ProxyOptions:
+    adapter_name = resolve_adapter_name(
+        os.environ.get("DATABASE_ADAPTER"),
+        legacy_engine=os.environ.get(
+            "DATABASE_ENGINE"
+        ),
+        legacy_dialect=os.environ.get(
+            "SQL_DIALECT"
+        ),
+    )
+
+    adapter = get_adapter(adapter_name)
+
     return ProxyOptions(
-        listen_port=int(os.environ.get("PROXY_PORT", "5433")),
-        target_host=os.environ.get("DB_HOST", "127.0.0.1"),
-        target_port=int(os.environ.get("DB_PORT", "5432")),
-        dialect=os.environ.get("SQL_DIALECT", "postgres"),
-        estimator_user=os.environ.get("ESTIMATOR_USER", "postgres"),
-        estimator_password=os.environ.get("ESTIMATOR_PASSWORD", ""),
-        confirmation_provider=build_confirmation_provider(),
-        database_engine=os.environ.get("DATABASE_ENGINE", "postgres"),
+        listen_port=int(
+            os.environ.get("PROXY_PORT", "5433")
+        ),
+        target_host=os.environ.get(
+            "DB_HOST",
+            "127.0.0.1",
+        ),
+        target_port=int(
+            os.environ.get(
+                "DB_PORT",
+                str(adapter.default_port),
+            )
+        ),
+        dialect=os.environ.get(
+            "SQL_DIALECT",
+            adapter.dialect,
+        ),
+        estimator_user=os.environ.get(
+            "ESTIMATOR_USER",
+            "postgres",
+        ),
+        estimator_password=os.environ.get(
+            "ESTIMATOR_PASSWORD",
+            "",
+        ),
+        confirmation_provider=(
+            build_confirmation_provider()
+        ),
+        database_engine=os.environ.get(
+            "DATABASE_ENGINE",
+            adapter.name,
+        ),
+        adapter_name=adapter.name,
         estimate_timeout_seconds=float(
-            os.environ.get("ESTIMATE_TIMEOUT_SECONDS", "8")
+            os.environ.get(
+                "ESTIMATE_TIMEOUT_SECONDS",
+                "8",
+            )
         ),
         policy_config=build_policy_config(),
         audit_logger=build_audit_logger(),

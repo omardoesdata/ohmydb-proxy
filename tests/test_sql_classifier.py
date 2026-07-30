@@ -29,3 +29,21 @@ def test_multiple_statements_are_detected_as_critical_batch():
     assert result.statement_type == "MULTI_STATEMENT"
     assert result.impact_kind == "batch"
     assert result.statement_count == 2
+
+def test_begin_is_safe_transaction_control():
+    result = classify("BEGIN", "postgres")
+    assert result.risk == "safe"
+    assert result.statement_type == "TRANSACTION"
+    assert result.impact_kind == "transaction"
+
+
+def test_commit_is_safe_transaction_control():
+    result = classify("COMMIT", "postgres")
+    assert result.risk == "safe"
+    assert result.statement_type == "COMMIT"
+
+
+def test_rollback_is_safe_transaction_control():
+    result = classify("ROLLBACK", "postgres")
+    assert result.risk == "safe"
+    assert result.statement_type == "ROLLBACK"
