@@ -64,3 +64,11 @@ violation SQLSTATE `08P01`.
 Simple Query batches are parsed as a full list rather than only the first AST.
 More than one statement is classified as `MULTI_STATEMENT` and evaluated by a
 dedicated policy setting.
+
+
+## v0.5 formal adapter boundary
+
+The adapter registry is the single database-family selection point. An adapter
+owns identity, aliases, SQL dialect, default port, capability metadata,
+read-only impact estimation, and protocol-runtime startup. PostgreSQL is the
+reference implementation.

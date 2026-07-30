@@ -5,7 +5,7 @@ reaches the real database. It classifies risk, estimates affected rows where
 possible, applies policy, requests confirmation when required, and writes an
 append-only audit record.
 
-## v0.4 capabilities
+## v0.5 capabilities
 
 - PostgreSQL Simple Query protocol.
 - PostgreSQL extended `Parse -> Bind -> Execute` protocol.
@@ -35,6 +35,7 @@ python -m pip install -e ".[dev]"
 ## Configuration
 
 ```powershell
+$env:DATABASE_ADAPTER = "postgres"
 $env:DB_HOST = "127.0.0.1"
 $env:DB_PORT = "5432"
 $env:PROXY_PORT = "5433"
@@ -115,3 +116,19 @@ This is an alpha release. It does not terminate PostgreSQL TLS, decode every
 binary parameter type, or support non-PostgreSQL wire protocols. Transaction
 status is tracked, but v0.4 is not yet a substitute for database permissions,
 backups, transaction discipline, or production change controls.
+
+
+## Database adapter framework
+
+`DATABASE_ADAPTER` is the primary database-family selector. v0.5 registers
+PostgreSQL under `postgres`, `postgresql`, and `pg`. Legacy
+`DATABASE_ENGINE` and `SQL_DIALECT` remain supported during the alpha
+migration period.
+
+## Real PostgreSQL integration matrix
+
+With `sql-safety-postgres-v05` running:
+
+```powershell
+python .\scripts\run_v05_integration.py
+```
