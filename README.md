@@ -132,3 +132,5 @@ With `sql-safety-postgres-v05` running:
 ```powershell
 python .\scripts\run_v05_integration.py
 ```
+
+> Latest pre-release: **v0.5.0a1** — database adapter architecture.
