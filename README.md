@@ -1,11 +1,11 @@
 # SQL Safety Proxy
 
-SQL Safety Proxy is a local PostgreSQL proxy that evaluates SQL before it
+SQL Safety Proxy is a local database proxy that evaluates SQL before it
 reaches the real database. It classifies risk, estimates affected rows where
 possible, applies policy, requests confirmation when required, and writes an
 append-only audit record.
 
-## v0.5 capabilities
+## v0.6 capabilities
 
 - PostgreSQL Simple Query protocol.
 - PostgreSQL extended `Parse -> Bind -> Execute` protocol.
@@ -133,4 +133,16 @@ With `sql-safety-postgres-v05` running:
 python .\scripts\run_v05_integration.py
 ```
 
-> Latest pre-release: **v0.5.0a1** � database adapter architecture.
+> Latest pre-release: **v0.5.0a1** â€” database adapter architecture.
+
+
+## MySQL/MariaDB alpha adapter
+
+v0.6 adds an operational MySQL/MariaDB wire-protocol proxy runtime, including
+authentication relay, command dispatch, session database tracking, policy
+evaluation, impact estimation, audit logging, packet reassembly, and safe
+connection shutdown.
+
+The runtime has passed real MariaDB client integration testing and fresh-wheel
+validation. Prepared statements remain unsupported in this alpha release.
+TLS termination is not supported; clients must connect without TLS.

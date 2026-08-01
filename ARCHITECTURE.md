@@ -72,3 +72,11 @@ The adapter registry is the single database-family selection point. An adapter
 owns identity, aliases, SQL dialect, default port, capability metadata,
 read-only impact estimation, and protocol-runtime startup. PostgreSQL is the
 reference implementation.
+
+
+## v0.6 MySQL/MariaDB phase-1 boundary
+
+MySQL and MariaDB now resolve through one shared adapter. This phase adds the
+packet and estimator foundation only. The wire runtime is deliberately disabled
+until authentication forwarding, `COM_QUERY`, and prepared statement handling
+pass their dedicated integration matrices.

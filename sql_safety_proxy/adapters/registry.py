@@ -56,9 +56,11 @@ def _load_builtins() -> None:
         if _BUILTINS_LOADED:
             return
 
+        from .mysql.adapter import MYSQL_ADAPTER
         from .postgres.adapter import POSTGRES_ADAPTER
 
         register_adapter(POSTGRES_ADAPTER)
+        register_adapter(MYSQL_ADAPTER)
         _BUILTINS_LOADED = True
 
 

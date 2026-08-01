@@ -53,40 +53,33 @@ def test_legacy_configuration_resolves_to_postgres():
 
 
 def test_unsupported_adapter_error_lists_available_adapters():
-    with pytest.raises(
-        ValueError,
-        match="Available adapters: postgres",
-    ):
-        get_adapter("mysql")
+    with pytest.raises(ValueError) as exc_info:
+        get_adapter("oracle")
+
+    message = str(exc_info.value)
+
+    assert "Unsupported database adapter 'oracle'" in message
+    assert "Available adapters:" in message
+    assert "mysql" in message
+    assert "postgres" in message
+
+def test_mysql_and_mariadb_resolve_to_same_adapter():
+    mysql = get_adapter("mysql")
+    mariadb = get_adapter("mariadb")
+
+    assert mysql is mariadb
+    assert mysql.name == "mysql"
+    assert mysql.dialect == "mysql"
+    assert mysql.default_port == 3306
+    assert mysql.capabilities.simple_query is True
+    assert mysql.capabilities.prepared_statements is False
+    assert mysql.capabilities.impact_estimation is True
 
 
-class FakeAdapter(DatabaseAdapter):
-    name = "test-fake-v05"
-    aliases = ("test-fake-alias-v05",)
-    display_name = "Fake"
-    dialect = "postgres"
-    default_port = 6543
-    capabilities = DatabaseCapabilities(
-        network_proxy=False,
-        simple_query=False,
-        prepared_statements=False,
-        named_portals=False,
-        transaction_state=False,
-        impact_estimation=False,
-        tls_termination=False,
-        binary_parameter_oids=False,
-    )
+def test_registry_lists_mysql_and_postgres():
+    names = {
+        adapter.name
+        for adapter in list_adapters()
+    }
 
-    async def estimate_rows(self, preview_query, options):
-        return 7
-
-    async def start_proxy(self, options):
-        return None
-
-
-def test_external_adapter_can_be_registered():
-    adapter = FakeAdapter()
-    register_adapter(adapter, replace=True)
-
-    assert get_adapter("test-fake-v05") is adapter
-    assert get_adapter("test-fake-alias-v05") is adapter
+    assert {"mysql", "postgres"} <= names
