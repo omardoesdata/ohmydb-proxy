@@ -78,6 +78,7 @@ class ProxyOptions:
 
     database_engine: str = "postgres"
     adapter_name: str = "postgres"
+    database_name: str = "postgres"
     estimate_timeout_seconds: float = 8.0
 
     policy_config: PolicyConfig = field(

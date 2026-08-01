@@ -160,6 +160,10 @@ def build_options() -> ProxyOptions:
             adapter.name,
         ),
         adapter_name=adapter.name,
+        database_name=os.environ.get(
+            "DB_NAME",
+            "postgres",
+        ),
         estimate_timeout_seconds=float(
             os.environ.get(
                 "ESTIMATE_TIMEOUT_SECONDS",

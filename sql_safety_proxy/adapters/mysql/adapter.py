@@ -39,9 +39,10 @@ class MySqlAdapter(DatabaseAdapter):
         return await estimate_mysql_rows(preview_query, options)
 
     async def start_proxy(self, options: Any) -> None:
-        raise NotImplementedError(
-            "MySQL/MariaDB wire runtime is not enabled in v0.6 phase 1"
-        )
+        from .runtime import start_mysql_proxy
+
+        self.validate_runtime(options)
+        await start_mysql_proxy(options)
 
 
 MYSQL_ADAPTER = MySqlAdapter()

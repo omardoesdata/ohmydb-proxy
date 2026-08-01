@@ -133,11 +133,16 @@ With `sql-safety-postgres-v05` running:
 python .\scripts\run_v05_integration.py
 ```
 
-> Latest pre-release: **v0.5.0a1** — database adapter architecture.
+> Latest pre-release: **v0.5.0a1** â€” database adapter architecture.
 
 
 ## MySQL/MariaDB alpha adapter
 
-v0.6 phase 1 adds the adapter registry entry, packet framing, protocol helpers,
-and least-privilege impact estimator. The MySQL wire runtime and prepared
-statements remain disabled until their real-client integration gate passes.
+v0.6 adds an operational MySQL/MariaDB wire-protocol proxy runtime, including
+authentication relay, command dispatch, session database tracking, policy
+evaluation, impact estimation, audit logging, packet reassembly, and safe
+connection shutdown.
+
+The runtime has passed real MariaDB client integration testing and fresh-wheel
+validation. Prepared statements remain unsupported in this alpha release.
+TLS termination is not supported; clients must connect without TLS.
