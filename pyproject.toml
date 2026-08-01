@@ -4,15 +4,15 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sql-safety-proxy"
-version = "0.5.0a1"
-description = "A local PostgreSQL safety proxy that warns before risky SQL mutations execute."
+version = "0.6.0a1"
+description = "A local database safety proxy that warns before risky SQL mutations execute."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
 authors = [
   {name = "SQL Safety Proxy contributors"}
 ]
-keywords = ["sql", "postgresql", "database", "safety", "proxy", "developer-tools"]
+keywords = ["sql", "postgresql", "mysql", "mariadb", "database", "safety", "proxy", "developer-tools"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
@@ -25,6 +25,8 @@ classifiers = [
 ]
 dependencies = [
   "asyncpg>=0.31,<1",
+  "aiomysql>=0.2,<1",
+  "cryptography>=42",
   "sqlglot>=30,<31",
 ]
 
@@ -48,4 +50,6 @@ dev = [
     "pytest-asyncio>=0.23",
     "build>=1.2",
     "psycopg[binary]>=3.2,<4",
+    "PyMySQL>=1.1,<2",
+    "mysql-connector-python>=9,<10",
 ]
