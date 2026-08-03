@@ -133,7 +133,7 @@ With `sql-safety-postgres-v05` running:
 python .\scripts\run_v05_integration.py
 ```
 
-> Latest pre-release: **v0.5.0a1** â€” database adapter architecture.
+> Latest pre-release: **v0.5.0a1** Ã¢â‚¬â€ database adapter architecture.
 
 
 ## MySQL/MariaDB alpha adapter
