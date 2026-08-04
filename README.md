@@ -133,7 +133,11 @@ With `sql-safety-postgres-v05` running:
 python .\scripts\run_v05_integration.py
 ```
 
-> Latest pre-release: **v0.5.0a1** Ã¢â‚¬â€ database adapter architecture.
+> Latest pre-release: **v0.6.0a1** - MySQL/MariaDB proxy runtime.
+>
+> Verify release assets and checksums with `gh release view v0.6.0a1`.
+>
+> Verify release assets and checksums with gh release view v0.6.0a1.
 
 
 ## MySQL/MariaDB alpha adapter
