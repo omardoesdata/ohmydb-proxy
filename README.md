@@ -136,9 +136,6 @@ python .\scripts\run_v05_integration.py
 > Latest pre-release: **v0.6.0a1** - MySQL/MariaDB proxy runtime.
 >
 > Verify release assets and checksums with `gh release view v0.6.0a1`.
->
-> Verify release assets and checksums with gh release view v0.6.0a1.
-
 
 ## MySQL/MariaDB alpha adapter
 
