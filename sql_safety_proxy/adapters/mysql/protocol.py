@@ -32,7 +32,11 @@ class MySqlCommandKind(str, Enum):
     QUERY = "query"
     INIT_DB = "init_db"
     QUIT = "quit"
-    PREPARED_STATEMENT = "prepared_statement"
+    STMT_PREPARE = "stmt_prepare"
+    STMT_EXECUTE = "stmt_execute"
+    STMT_SEND_LONG_DATA = "stmt_send_long_data"
+    STMT_CLOSE = "stmt_close"
+    STMT_RESET = "stmt_reset"
     UNSUPPORTED = "unsupported"
 
 
@@ -66,6 +70,22 @@ class MySqlLogicalMessage:
     payload: bytes
     raw_packets: bytes
     packet_count: int
+
+
+@dataclass(frozen=True)
+class MySqlStmtExecute:
+    statement_id: int
+    flags: int
+    iteration_count: int
+    parameter_payload: bytes
+
+
+@dataclass(frozen=True)
+class MySqlStmtPrepareOk:
+    statement_id: int
+    column_count: int
+    parameter_count: int
+    warning_count: int
 
 
 class MySqlPacketFramer:
@@ -233,14 +253,20 @@ def classify_command(
     elif command_code == COM_QUIT:
         kind = MySqlCommandKind.QUIT
 
-    elif command_code in {
-        COM_STMT_PREPARE,
-        COM_STMT_EXECUTE,
-        COM_STMT_SEND_LONG_DATA,
-        COM_STMT_CLOSE,
-        COM_STMT_RESET,
-    }:
-        kind = MySqlCommandKind.PREPARED_STATEMENT
+    elif command_code == COM_STMT_PREPARE:
+        kind = MySqlCommandKind.STMT_PREPARE
+
+    elif command_code == COM_STMT_EXECUTE:
+        kind = MySqlCommandKind.STMT_EXECUTE
+
+    elif command_code == COM_STMT_SEND_LONG_DATA:
+        kind = MySqlCommandKind.STMT_SEND_LONG_DATA
+
+    elif command_code == COM_STMT_CLOSE:
+        kind = MySqlCommandKind.STMT_CLOSE
+
+    elif command_code == COM_STMT_RESET:
+        kind = MySqlCommandKind.STMT_RESET
 
     else:
         kind = MySqlCommandKind.UNSUPPORTED
@@ -275,6 +301,90 @@ def parse_query(command_payload: bytes) -> str:
         raise MySqlProtocolError(
             "COM_QUERY contains invalid UTF-8"
         ) from exc
+
+
+def parse_stmt_prepare(
+    command_payload: bytes,
+) -> str:
+    if not command_payload:
+        raise MySqlProtocolError(
+            "COM_STMT_PREPARE contains no SQL text"
+        )
+
+    try:
+        return command_payload.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise MySqlProtocolError(
+            "COM_STMT_PREPARE contains invalid UTF-8"
+        ) from exc
+
+
+def parse_statement_id(command_payload: bytes) -> int:
+    if len(command_payload) < 4:
+        raise MySqlProtocolError(
+            "MySQL prepared-statement command is missing "
+            "its 4-byte statement id"
+        )
+
+    return int.from_bytes(
+        command_payload[:4],
+        "little",
+    )
+
+
+def parse_stmt_execute(
+    command_payload: bytes,
+) -> MySqlStmtExecute:
+    if len(command_payload) < 9:
+        raise MySqlProtocolError(
+            "COM_STMT_EXECUTE payload is shorter than 9 bytes"
+        )
+
+    return MySqlStmtExecute(
+        statement_id=int.from_bytes(
+            command_payload[0:4],
+            "little",
+        ),
+        flags=command_payload[4],
+        iteration_count=int.from_bytes(
+            command_payload[5:9],
+            "little",
+        ),
+        parameter_payload=command_payload[9:],
+    )
+
+
+def parse_stmt_prepare_ok(
+    backend_payload: bytes,
+) -> MySqlStmtPrepareOk:
+    if not backend_payload or backend_payload[0] != 0x00:
+        raise MySqlProtocolError(
+            "Backend packet is not COM_STMT_PREPARE_OK"
+        )
+
+    if len(backend_payload) < 12:
+        raise MySqlProtocolError(
+            "COM_STMT_PREPARE_OK packet is shorter than 12 bytes"
+        )
+
+    return MySqlStmtPrepareOk(
+        statement_id=int.from_bytes(
+            backend_payload[1:5],
+            "little",
+        ),
+        column_count=int.from_bytes(
+            backend_payload[5:7],
+            "little",
+        ),
+        parameter_count=int.from_bytes(
+            backend_payload[7:9],
+            "little",
+        ),
+        warning_count=int.from_bytes(
+            backend_payload[10:12],
+            "little",
+        ),
+    )
 
 
 def parse_database_name(command_payload: bytes) -> str:

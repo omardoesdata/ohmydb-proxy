@@ -13,6 +13,7 @@ from .auth import (
 from .protocol import (
     MySqlPacket,
     MySqlProtocolError,
+    parse_stmt_prepare_ok,
 )
 from .session import MySqlSessionState
 
@@ -73,6 +74,24 @@ async def route_backend_packet(
 
     if state.session.pending_database is not None:
         state.session.complete_database_change(packet.payload)
+
+    elif state.session.pending_statement_sql is not None:
+        if packet.payload and packet.payload[0] == 0x00:
+            prepared = parse_stmt_prepare_ok(packet.payload)
+            state.session.complete_statement_prepare(
+                statement_id=prepared.statement_id,
+                parameter_count=prepared.parameter_count,
+                column_count=prepared.column_count,
+            )
+
+        elif packet.payload and packet.payload[0] == 0xFF:
+            state.session.fail_statement_prepare()
+
+        else:
+            state.session.fail_statement_prepare()
+            raise MySqlProtocolError(
+                "Unexpected backend response to COM_STMT_PREPARE"
+            )
 
     client_writer.write(packet.raw)
     await client_writer.drain()

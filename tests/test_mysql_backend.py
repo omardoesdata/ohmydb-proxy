@@ -260,3 +260,64 @@ def test_mark_authenticated_requires_successful_auth():
         match="before MySQL authentication succeeds",
     ):
         state.mark_authenticated()
+
+
+@pytest.mark.asyncio
+async def test_prepare_ok_registers_backend_statement_id():
+    state = backend_state()
+    state.auth.accept_backend_packet(packet(b"\x00"))
+    state.mark_authenticated()
+    state.session.begin_statement_prepare(
+        "UPDATE safety_users SET active = ? WHERE id = ?"
+    )
+
+    client = MemoryWriter()
+    prepare_ok = packet(
+        b"\x00"
+        b"\x2a\x00\x00\x00"
+        b"\x00\x00"
+        b"\x02\x00"
+        b"\x00"
+        b"\x00\x00",
+        1,
+    )
+
+    await route_backend_packet(
+        packet=prepare_ok,
+        state=state,
+        client_writer=client,
+    )
+
+    statement = state.session.prepared_statements[42]
+
+    assert statement.sql == (
+        "UPDATE safety_users SET active = ? WHERE id = ?"
+    )
+    assert statement.parameter_count == 2
+    assert statement.column_count == 0
+    assert state.session.pending_statement_sql is None
+    assert bytes(client.data) == prepare_ok.raw
+
+
+@pytest.mark.asyncio
+async def test_prepare_error_discards_pending_statement():
+    state = backend_state()
+    state.auth.accept_backend_packet(packet(b"\x00"))
+    state.mark_authenticated()
+    state.session.begin_statement_prepare("SELECT ?")
+
+    client = MemoryWriter()
+    prepare_error = packet(
+        b"\xff\x15\x04#42000Prepare failed",
+        1,
+    )
+
+    await route_backend_packet(
+        packet=prepare_error,
+        state=state,
+        client_writer=client,
+    )
+
+    assert state.session.pending_statement_sql is None
+    assert state.session.prepared_statements == {}
+    assert bytes(client.data) == prepare_error.raw

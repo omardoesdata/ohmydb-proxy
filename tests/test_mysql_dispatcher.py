@@ -11,6 +11,7 @@ from sql_safety_proxy.adapters.mysql.protocol import (
     COM_INIT_DB,
     COM_QUERY,
     COM_QUIT,
+    COM_STMT_EXECUTE,
     COM_STMT_PREPARE,
     MySqlLogicalMessage,
     build_packet,
@@ -172,7 +173,7 @@ async def test_quit_is_forwarded_and_marks_session_closing():
 
 
 @pytest.mark.asyncio
-async def test_prepared_statement_is_blocked_in_balanced_mode():
+async def test_stmt_prepare_is_forwarded_and_recorded():
     backend = MemoryWriter()
     client = MemoryWriter()
     session = MySqlSessionState(
@@ -191,10 +192,10 @@ async def test_prepared_statement_is_blocked_in_balanced_mode():
         opts=options(FailSafeMode.BALANCED),
     )
 
-    assert forwarded is False
-    assert bytes(backend.data) == b""
-    assert bytes(client.data)[4] == 0xFF
-    assert b"prepared-statement" in bytes(client.data)
+    assert forwarded is True
+    assert bytes(backend.data) == logical.raw_packets
+    assert bytes(client.data) == b""
+    assert session.pending_statement_sql == "SELECT ?"
 
 
 @pytest.mark.asyncio
@@ -294,3 +295,30 @@ async def test_invalid_utf8_query_uses_protocol_gap_policy():
     assert bytes(backend.data) == b""
     assert bytes(client.data)[4] == 0xFF
     assert b"invalid UTF-8" in bytes(client.data)
+
+
+@pytest.mark.asyncio
+async def test_stmt_execute_remains_blocked_in_balanced_mode():
+    backend = MemoryWriter()
+    client = MemoryWriter()
+    session = MySqlSessionState(
+        database="sql_safety_v06"
+    )
+    logical = message(
+        COM_STMT_EXECUTE,
+        b"\x2a\x00\x00\x00"
+        b"\x00"
+        b"\x01\x00\x00\x00",
+    )
+
+    forwarded = await dispatch_authenticated_command(
+        message=logical,
+        session=session,
+        backend_writer=backend,
+        client_writer=client,
+        opts=options(FailSafeMode.BALANCED),
+    )
+
+    assert forwarded is False
+    assert bytes(backend.data) == b""
+    assert b"Protocol gap" in bytes(client.data)

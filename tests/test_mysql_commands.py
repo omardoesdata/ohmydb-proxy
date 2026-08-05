@@ -58,21 +58,37 @@ def test_classifies_quit_command():
 
 
 @pytest.mark.parametrize(
-    "command_code",
+    ("command_code", "expected_kind"),
     [
-        COM_STMT_PREPARE,
-        COM_STMT_EXECUTE,
-        COM_STMT_SEND_LONG_DATA,
-        COM_STMT_CLOSE,
-        COM_STMT_RESET,
+        (
+            COM_STMT_PREPARE,
+            MySqlCommandKind.STMT_PREPARE,
+        ),
+        (
+            COM_STMT_EXECUTE,
+            MySqlCommandKind.STMT_EXECUTE,
+        ),
+        (
+            COM_STMT_SEND_LONG_DATA,
+            MySqlCommandKind.STMT_SEND_LONG_DATA,
+        ),
+        (
+            COM_STMT_CLOSE,
+            MySqlCommandKind.STMT_CLOSE,
+        ),
+        (
+            COM_STMT_RESET,
+            MySqlCommandKind.STMT_RESET,
+        ),
     ],
 )
-def test_prepared_statement_commands_are_explicitly_unsupported(
+def test_classifies_prepared_statement_commands(
     command_code,
+    expected_kind,
 ):
     command = classify_command(command_code, b"payload")
 
-    assert command.kind == MySqlCommandKind.PREPARED_STATEMENT
+    assert command.kind == expected_kind
 
 
 def test_unknown_command_is_classified_as_unsupported():

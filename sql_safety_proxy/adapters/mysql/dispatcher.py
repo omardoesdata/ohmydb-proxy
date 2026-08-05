@@ -16,6 +16,8 @@ from .protocol import (
     MySqlProtocolError,
     parse_database_name,
     parse_logical_command,
+    parse_statement_id,
+    parse_stmt_prepare,
 )
 from .session import MySqlSessionState
 
@@ -99,10 +101,57 @@ async def dispatch_authenticated_command(
         await backend_writer.drain()
         return True
 
-    if command.kind == MySqlCommandKind.PREPARED_STATEMENT:
+    if command.kind == MySqlCommandKind.STMT_PREPARE:
+        try:
+            sql = parse_stmt_prepare(command.payload)
+            session.begin_statement_prepare(sql)
+        except MySqlProtocolError as exc:
+            return await handle_mysql_protocol_gap(
+                reason=str(exc),
+                command_code=command.command_code,
+                raw_message=message.raw_packets,
+                response_sequence_id=response_sequence_id,
+                database=session.database,
+                backend_writer=backend_writer,
+                client_writer=client_writer,
+                opts=opts,
+            )
+
+        backend_writer.write(message.raw_packets)
+        await backend_writer.drain()
+        return True
+
+    if command.kind == MySqlCommandKind.STMT_CLOSE:
+        try:
+            statement_id = parse_statement_id(
+                command.payload
+            )
+        except MySqlProtocolError as exc:
+            return await handle_mysql_protocol_gap(
+                reason=str(exc),
+                command_code=command.command_code,
+                raw_message=message.raw_packets,
+                response_sequence_id=response_sequence_id,
+                database=session.database,
+                backend_writer=backend_writer,
+                client_writer=client_writer,
+                opts=opts,
+            )
+
+        session.close_prepared_statement(statement_id)
+        backend_writer.write(message.raw_packets)
+        await backend_writer.drain()
+        return True
+
+    if command.kind in {
+        MySqlCommandKind.STMT_EXECUTE,
+        MySqlCommandKind.STMT_SEND_LONG_DATA,
+        MySqlCommandKind.STMT_RESET,
+    }:
         reason = (
-            "MySQL binary prepared-statement commands are not "
-            "implemented safely in v0.6"
+            "MySQL binary prepared-statement execution is not "
+            "enabled until statement lifecycle and parameter "
+            "inspection are complete"
         )
     else:
         reason = (
