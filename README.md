@@ -147,3 +147,10 @@ connection shutdown.
 The runtime has passed real MariaDB client integration testing and fresh-wheel
 validation. Prepared statements remain unsupported in this alpha release.
 TLS termination is not supported; clients must connect without TLS.
+
+## v0.7 development roadmap
+
+The next development phase adds safe MySQL/MariaDB prepared-statement
+inspection, binary parameter decoding, statement lifecycle handling, and
+transaction-state tracking.
+
