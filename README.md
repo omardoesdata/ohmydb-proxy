@@ -156,3 +156,7 @@ transaction-state tracking.
 
 > v0.7 progress: prepared-execution inspection is under active validation.
 > Adapter capability flags remain disabled until real MariaDB integration passes.
+
+> v0.7 milestone: MySQL/MariaDB prepared statements and transaction-state
+> support have passed real Connector/Python, MariaDB Connector/Python,
+> concurrency, recovery, packaging, and fresh-wheel validation.
