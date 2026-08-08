@@ -72,7 +72,8 @@ def test_mysql_and_mariadb_resolve_to_same_adapter():
     assert mysql.dialect == "mysql"
     assert mysql.default_port == 3306
     assert mysql.capabilities.simple_query is True
-    assert mysql.capabilities.prepared_statements is False
+    assert mysql.capabilities.prepared_statements is True
+    assert mysql.capabilities.transaction_state is True
     assert mysql.capabilities.impact_estimation is True
 
 

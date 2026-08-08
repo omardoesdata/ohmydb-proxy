@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 
 from sql_safety_proxy.fail_safe import (
     ProtocolGapAction,
@@ -26,6 +27,7 @@ from sql_safety_proxy.sql_classifier import (
 )
 
 from .protocol import (
+    COM_STMT_EXECUTE,
     MySqlLogicalMessage,
     MySqlProtocolError,
     build_error_packet,
@@ -65,6 +67,95 @@ async def handle_mysql_query(
     approved, decision = await _evaluate_and_decide(
         sql=sql,
         protocol="mysql-com-query",
+        classification=classification,
+        estimated_rows=estimated_rows,
+        estimate_error=estimate_error,
+        approximate=False,
+        database=database,
+        opts=opts,
+    )
+
+    if approved:
+        backend_writer.write(message.raw_packets)
+        await backend_writer.drain()
+        return True
+
+    client_writer.write(
+        build_mysql_policy_error(
+            classification=classification,
+            estimated_rows=estimated_rows,
+            decision=decision,
+            sequence_id=(message.last_sequence_id + 1) % 256,
+        )
+    )
+    await client_writer.drain()
+    return False
+
+
+async def handle_mysql_stmt_execute(
+    *,
+    message: MySqlLogicalMessage,
+    inspection_sql: str,
+    sql_description: str,
+    estimate_safe: bool,
+    database: str,
+    backend_writer: asyncio.StreamWriter,
+    client_writer: asyncio.StreamWriter,
+    opts: ProxyOptions,
+) -> bool:
+    """Inspect and apply policy to a reconstructed COM_STMT_EXECUTE."""
+
+    inspection_classification = classify(
+        inspection_sql,
+        dialect=opts.dialect,
+    )
+    if inspection_classification.statement_type in {
+        "EMPTY",
+        "UNPARSEABLE",
+    }:
+        return await handle_mysql_protocol_gap(
+            reason=(
+                "Reconstructed COM_STMT_EXECUTE SQL could not be "
+                "parsed safely"
+            ),
+            command_code=COM_STMT_EXECUTE,
+            raw_message=message.raw_packets,
+            response_sequence_id=(message.last_sequence_id + 1) % 256,
+            database=database,
+            backend_writer=backend_writer,
+            client_writer=client_writer,
+            opts=opts,
+        )
+
+    if estimate_safe:
+        estimated_rows, estimate_error = await _estimate(
+            inspection_classification,
+            opts,
+            database,
+        )
+    else:
+        estimated_rows = None
+        estimate_error = (
+            "Prepared-statement parameter semantics cannot be "
+            "estimated safely"
+        )
+
+    if estimate_error is not None:
+        estimate_error = (
+            "Prepared-statement row-impact estimation failed"
+        )
+
+    classification = replace(
+        inspection_classification,
+        preview_query=None,
+    )
+
+    approved, decision = await _evaluate_and_decide(
+        # Prepared SQL and parameter values can contain secrets. Keep both
+        # out of console, confirmation, and audit output while inspecting
+        # the reconstructed statement internally.
+        sql=sql_description,
+        protocol="mysql-com-stmt-execute",
         classification=classification,
         estimated_rows=estimated_rows,
         estimate_error=estimate_error,

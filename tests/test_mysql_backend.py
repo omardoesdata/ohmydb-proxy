@@ -14,6 +14,9 @@ from sql_safety_proxy.adapters.mysql.backend import (
 )
 from sql_safety_proxy.adapters.mysql.protocol import (
     CLIENT_CONNECT_WITH_DB,
+    CLIENT_PROTOCOL_41,
+    SERVER_STATUS_AUTOCOMMIT,
+    SERVER_STATUS_IN_TRANS,
     MySqlHandshakeResponse,
     MySqlPacket,
     MySqlProtocolError,
@@ -295,8 +298,21 @@ async def test_prepare_ok_registers_backend_statement_id():
     )
     assert statement.parameter_count == 2
     assert statement.column_count == 0
+    assert state.session.pending_statement_sql is not None
+
+    for sequence_id, payload in (
+        (2, b"parameter-one"),
+        (3, b"parameter-two"),
+        (4, b"\xfe"),
+    ):
+        await route_backend_packet(
+            packet=packet(payload, sequence_id),
+            state=state,
+            client_writer=client,
+        )
+
     assert state.session.pending_statement_sql is None
-    assert bytes(client.data) == prepare_ok.raw
+    assert bytes(client.data).startswith(prepare_ok.raw)
 
 
 @pytest.mark.asyncio
@@ -321,3 +337,211 @@ async def test_prepare_error_discards_pending_statement():
     assert state.session.pending_statement_sql is None
     assert state.session.prepared_statements == {}
     assert bytes(client.data) == prepare_error.raw
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("payload", [b"\x00", b"\xffping failed"])
+async def test_ping_ok_or_error_clears_pending_state_and_is_forwarded(payload):
+    state = backend_state()
+    state.auth.accept_backend_packet(packet(b"\x00"))
+    state.mark_authenticated()
+    state.session.begin_ping()
+    client = MemoryWriter()
+    response = packet(payload, 1)
+
+    await route_backend_packet(
+        packet=response,
+        state=state,
+        client_writer=client,
+    )
+
+    assert state.session.pending_ping is False
+    assert state.phase == MySqlBackendPhase.COMMAND_RESPONSE
+    assert bytes(client.data) == response.raw
+
+
+@pytest.mark.asyncio
+async def test_unexpected_ping_response_fails_closed_and_clears_pending_state():
+    state = backend_state()
+    state.auth.accept_backend_packet(packet(b"\x00"))
+    state.mark_authenticated()
+    state.session.begin_ping()
+    client = MemoryWriter()
+
+    with pytest.raises(MySqlProtocolError, match="COM_PING"):
+        await route_backend_packet(
+            packet=packet(b"\x01unexpected", 1),
+            state=state,
+            client_writer=client,
+        )
+
+    assert state.session.pending_ping is False
+    assert bytes(client.data) == b""
+
+
+def _register_backend_statement(state, statement_id=42):
+    state.session.begin_statement_prepare("SELECT ?")
+    return state.session.complete_statement_prepare(
+        statement_id=statement_id,
+        parameter_count=1,
+        column_count=1,
+    )
+
+
+@pytest.mark.asyncio
+async def test_reset_ok_clears_metadata_without_removing_statement():
+    from sql_safety_proxy.adapters.mysql.protocol import (
+        MYSQL_TYPE_LONG,
+        MySqlParameterType,
+    )
+
+    state = backend_state()
+    state.auth.accept_backend_packet(packet(b"\x00"))
+    state.mark_authenticated()
+    statement = _register_backend_statement(state)
+    statement.parameter_types = (MySqlParameterType(MYSQL_TYPE_LONG),)
+    statement.long_data_parameters.add(0)
+    state.session.begin_statement_reset(42)
+    client = MemoryWriter()
+    response = packet(b"\x00", 1)
+
+    await route_backend_packet(
+        packet=response,
+        state=state,
+        client_writer=client,
+    )
+
+    assert state.session.prepared_statements[42] is statement
+    assert statement.parameter_types is None
+    assert statement.long_data_parameters == set()
+    assert state.session.pending_statement_reset_id is None
+    assert bytes(client.data) == response.raw
+
+
+@pytest.mark.asyncio
+async def test_reset_error_preserves_statement_metadata_and_clears_pending():
+    from sql_safety_proxy.adapters.mysql.protocol import (
+        MYSQL_TYPE_LONG,
+        MySqlParameterType,
+    )
+
+    state = backend_state()
+    state.auth.accept_backend_packet(packet(b"\x00"))
+    state.mark_authenticated()
+    statement = _register_backend_statement(state)
+    parameter_types = (MySqlParameterType(MYSQL_TYPE_LONG),)
+    statement.parameter_types = parameter_types
+    state.session.begin_statement_reset(42)
+    client = MemoryWriter()
+    response = packet(b"\xffreset failed", 1)
+
+    await route_backend_packet(
+        packet=response,
+        state=state,
+        client_writer=client,
+    )
+
+    assert state.session.prepared_statements[42] is statement
+    assert statement.parameter_types == parameter_types
+    assert state.session.pending_statement_reset_id is None
+    assert bytes(client.data) == response.raw
+
+
+@pytest.mark.asyncio
+async def test_unexpected_reset_response_fails_closed_without_registry_damage():
+    state = backend_state()
+    state.auth.accept_backend_packet(packet(b"\x00"))
+    state.mark_authenticated()
+    statement = _register_backend_statement(state)
+    state.session.begin_statement_reset(42)
+    client = MemoryWriter()
+
+    with pytest.raises(MySqlProtocolError, match="COM_STMT_RESET"):
+        await route_backend_packet(
+            packet=packet(b"\x01unexpected", 1),
+            state=state,
+            client_writer=client,
+        )
+
+    assert state.session.prepared_statements[42] is statement
+    assert state.session.pending_statement_reset_id is None
+    assert bytes(client.data) == b""
+
+
+@pytest.mark.asyncio
+async def test_query_ok_updates_transaction_state_and_clears_response():
+    state = backend_state()
+    state.auth.capability_flags |= CLIENT_PROTOCOL_41
+    state.auth.accept_backend_packet(
+        packet(b"\x00\x00\x00\x02\x00\x00\x00")
+    )
+    state.mark_authenticated()
+    state.session.begin_command_response("query")
+    client = MemoryWriter()
+    status = SERVER_STATUS_IN_TRANS | SERVER_STATUS_AUTOCOMMIT
+    response = packet(
+        b"\x00\x00\x00" + status.to_bytes(2, "little") + b"\x00\x00",
+        1,
+    )
+
+    await route_backend_packet(
+        packet=response,
+        state=state,
+        client_writer=client,
+    )
+
+    assert state.session.transaction_active is True
+    assert state.session.autocommit is True
+    assert state.session.pending_command_response is None
+    assert bytes(client.data) == response.raw
+
+
+@pytest.mark.asyncio
+async def test_query_error_preserves_prior_transaction_state():
+    state = backend_state()
+    state.auth.accept_backend_packet(packet(b"\x00"))
+    state.mark_authenticated()
+    state.session.update_transaction_status(SERVER_STATUS_IN_TRANS)
+    state.session.begin_command_response("query")
+    client = MemoryWriter()
+
+    await route_backend_packet(
+        packet=packet(b"\xff\x00\x00query failed", 1),
+        state=state,
+        client_writer=client,
+    )
+
+    assert state.session.transaction_active is True
+    assert state.session.pending_command_response is None
+
+
+@pytest.mark.asyncio
+async def test_prepare_metadata_error_invalidates_pipeline_after_forward():
+    state = backend_state()
+    state.auth.accept_backend_packet(packet(b"\x00"))
+    state.mark_authenticated()
+    state.session.begin_statement_prepare("SELECT ?")
+    event = state.session.pending_prepare_event
+    assert event is not None
+    client = MemoryWriter()
+    prepare_ok = packet(
+        b"\x00\x2a\x00\x00\x00\x00\x00\x01\x00\x00\x00\x00",
+        1,
+    )
+    await route_backend_packet(
+        packet=prepare_ok,
+        state=state,
+        client_writer=client,
+    )
+    metadata_error = packet(b"\xff\x00\x00metadata failed", 2)
+
+    await route_backend_packet(
+        packet=metadata_error,
+        state=state,
+        client_writer=client,
+    )
+
+    assert event.is_set()
+    assert state.session.last_prepare_failed is True
+    assert state.session.prepared_statements == {}
+    assert bytes(client.data).endswith(metadata_error.raw)

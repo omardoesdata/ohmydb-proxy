@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+import struct
 from dataclasses import dataclass
 from enum import Enum
 
@@ -11,17 +13,68 @@ DEFAULT_MAX_PACKET_BYTES = 64 * 1024 * 1024
 COM_QUIT = 0x01
 COM_INIT_DB = 0x02
 COM_QUERY = 0x03
+COM_PING = 0x0E
 COM_STMT_PREPARE = 0x16
 COM_STMT_EXECUTE = 0x17
 COM_STMT_SEND_LONG_DATA = 0x18
 COM_STMT_CLOSE = 0x19
 COM_STMT_RESET = 0x1A
 
+MARIADB_STMT_ID_LAST = 0xFFFFFFFF
+
+CLIENT_MYSQL = 0x00000001
 CLIENT_CONNECT_WITH_DB = 0x00000008
 CLIENT_SSL = 0x00000800
+CLIENT_PROTOCOL_41 = 0x00000200
+CLIENT_TRANSACTIONS = 0x00002000
 CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA = 0x00200000
 CLIENT_SECURE_CONNECTION = 0x00008000
 CLIENT_PLUGIN_AUTH = 0x00080000
+CLIENT_DEPRECATE_EOF = 0x01000000
+MARIADB_CLIENT_CACHE_METADATA = 1 << 36
+
+SERVER_STATUS_IN_TRANS = 0x0001
+SERVER_STATUS_AUTOCOMMIT = 0x0002
+SERVER_MORE_RESULTS_EXISTS = 0x0008
+SERVER_STATUS_IN_TRANS_READONLY = 0x2000
+
+MYSQL_TYPE_DECIMAL = 0x00
+MYSQL_TYPE_TINY = 0x01
+MYSQL_TYPE_SHORT = 0x02
+MYSQL_TYPE_LONG = 0x03
+MYSQL_TYPE_FLOAT = 0x04
+MYSQL_TYPE_DOUBLE = 0x05
+MYSQL_TYPE_NULL = 0x06
+MYSQL_TYPE_TIMESTAMP = 0x07
+MYSQL_TYPE_LONGLONG = 0x08
+MYSQL_TYPE_INT24 = 0x09
+MYSQL_TYPE_DATE = 0x0A
+MYSQL_TYPE_TIME = 0x0B
+MYSQL_TYPE_DATETIME = 0x0C
+MYSQL_TYPE_YEAR = 0x0D
+MYSQL_TYPE_NEWDATE = 0x0E
+MYSQL_TYPE_VARCHAR = 0x0F
+MYSQL_TYPE_BIT = 0x10
+MYSQL_TYPE_TIMESTAMP2 = 0x11
+MYSQL_TYPE_DATETIME2 = 0x12
+MYSQL_TYPE_TIME2 = 0x13
+MYSQL_TYPE_TYPED_ARRAY = 0x14
+MYSQL_TYPE_VECTOR = 0xF2
+MYSQL_TYPE_INVALID = 0xF3
+MYSQL_TYPE_BOOL = 0xF4
+MYSQL_TYPE_JSON = 0xF5
+MYSQL_TYPE_NEWDECIMAL = 0xF6
+MYSQL_TYPE_ENUM = 0xF7
+MYSQL_TYPE_SET = 0xF8
+MYSQL_TYPE_TINY_BLOB = 0xF9
+MYSQL_TYPE_MEDIUM_BLOB = 0xFA
+MYSQL_TYPE_LONG_BLOB = 0xFB
+MYSQL_TYPE_BLOB = 0xFC
+MYSQL_TYPE_VAR_STRING = 0xFD
+MYSQL_TYPE_STRING = 0xFE
+MYSQL_TYPE_GEOMETRY = 0xFF
+
+MYSQL_UNSIGNED_FLAG = 0x80
 
 
 class MySqlProtocolError(ValueError):
@@ -32,6 +85,7 @@ class MySqlCommandKind(str, Enum):
     QUERY = "query"
     INIT_DB = "init_db"
     QUIT = "quit"
+    PING = "ping"
     STMT_PREPARE = "stmt_prepare"
     STMT_EXECUTE = "stmt_execute"
     STMT_SEND_LONG_DATA = "stmt_send_long_data"
@@ -78,6 +132,34 @@ class MySqlStmtExecute:
     flags: int
     iteration_count: int
     parameter_payload: bytes
+
+
+@dataclass(frozen=True)
+class MySqlStmtLongData:
+    statement_id: int
+    parameter_id: int
+    data: bytes
+
+
+@dataclass(frozen=True)
+class MySqlParameterType:
+    type_code: int
+    unsigned: bool = False
+
+
+@dataclass(frozen=True)
+class MySqlDecodedParameter:
+    type_metadata: MySqlParameterType
+    value: int | float | bytes | None
+    sql_literal: str
+
+
+@dataclass(frozen=True)
+class MySqlStmtExecuteParameters:
+    null_bitmap: bytes
+    new_params_bound: bool
+    parameter_types: tuple[MySqlParameterType, ...]
+    parameters: tuple[MySqlDecodedParameter, ...]
 
 
 @dataclass(frozen=True)
@@ -253,6 +335,9 @@ def classify_command(
     elif command_code == COM_QUIT:
         kind = MySqlCommandKind.QUIT
 
+    elif command_code == COM_PING:
+        kind = MySqlCommandKind.PING
+
     elif command_code == COM_STMT_PREPARE:
         kind = MySqlCommandKind.STMT_PREPARE
 
@@ -332,6 +417,110 @@ def parse_statement_id(command_payload: bytes) -> int:
     )
 
 
+def parse_stmt_reset(command_payload: bytes) -> int:
+    if len(command_payload) != 4:
+        raise MySqlProtocolError(
+            "COM_STMT_RESET payload must contain exactly its "
+            "4-byte statement id"
+        )
+
+    return int.from_bytes(command_payload, "little")
+
+
+def parse_ok_packet_status(
+    payload: bytes,
+    *,
+    capability_flags: int,
+) -> int:
+    if not payload or payload[0] not in {0x00, 0xFE}:
+        raise MySqlProtocolError("Backend packet is not an OK packet")
+
+    offset = 1
+    _, offset = _read_packet_length_encoded_integer(
+        payload, offset, field_name="OK affected rows"
+    )
+    _, offset = _read_packet_length_encoded_integer(
+        payload, offset, field_name="OK last insert id"
+    )
+
+    if capability_flags & CLIENT_PROTOCOL_41:
+        status_end = offset + 2
+        warnings_end = status_end + 2
+        if warnings_end > len(payload):
+            raise MySqlProtocolError(
+                "Backend OK packet is missing status or warning fields"
+            )
+        return int.from_bytes(payload[offset:status_end], "little")
+
+    if capability_flags & CLIENT_TRANSACTIONS:
+        status_end = offset + 2
+        if status_end > len(payload):
+            raise MySqlProtocolError(
+                "Backend OK packet is missing server status"
+            )
+        return int.from_bytes(payload[offset:status_end], "little")
+
+    raise MySqlProtocolError(
+        "Backend OK packet has no negotiated server-status field"
+    )
+
+
+def parse_eof_packet_status(
+    payload: bytes,
+    *,
+    capability_flags: int,
+) -> int:
+    if not payload or payload[0] != 0xFE or len(payload) >= 9:
+        raise MySqlProtocolError("Backend packet is not an EOF packet")
+    if not capability_flags & CLIENT_PROTOCOL_41:
+        raise MySqlProtocolError(
+            "Backend EOF packet has no negotiated server-status field"
+        )
+    if len(payload) < 5:
+        raise MySqlProtocolError(
+            "Backend EOF packet is missing warning or status fields"
+        )
+    return int.from_bytes(payload[3:5], "little")
+
+
+def parse_resultset_column_count(payload: bytes) -> int:
+    count, _ = parse_resultset_header(payload, capability_flags=0)
+    return count
+
+
+def parse_resultset_header(
+    payload: bytes,
+    *,
+    capability_flags: int,
+) -> tuple[int, bool]:
+    count, offset = _read_packet_length_encoded_integer(
+        payload,
+        0,
+        field_name="result-set column count",
+    )
+    if count <= 0:
+        raise MySqlProtocolError(
+            "Backend result-set column count must be positive"
+        )
+    metadata_follows = True
+    if capability_flags & MARIADB_CLIENT_CACHE_METADATA:
+        if offset >= len(payload):
+            raise MySqlProtocolError(
+                "MariaDB result-set header is missing metadata indicator"
+            )
+        metadata_follows = payload[offset] == 1
+        if payload[offset] not in {0, 1}:
+            raise MySqlProtocolError(
+                "MariaDB result-set metadata indicator must be 0 or 1"
+            )
+        offset += 1
+    if offset != len(payload):
+        raise MySqlProtocolError(
+            "Backend result-set header has unexpected trailing bytes"
+        )
+    return count, metadata_follows
+
+
 def parse_stmt_execute(
     command_payload: bytes,
 ) -> MySqlStmtExecute:
@@ -351,6 +540,496 @@ def parse_stmt_execute(
             "little",
         ),
         parameter_payload=command_payload[9:],
+    )
+
+
+def parse_stmt_long_data(
+    command_payload: bytes,
+) -> MySqlStmtLongData:
+    if len(command_payload) < 6:
+        raise MySqlProtocolError(
+            "COM_STMT_SEND_LONG_DATA payload is shorter than 6 bytes"
+        )
+
+    return MySqlStmtLongData(
+        statement_id=int.from_bytes(command_payload[:4], "little"),
+        parameter_id=int.from_bytes(command_payload[4:6], "little"),
+        data=command_payload[6:],
+    )
+
+
+def parse_stmt_execute_parameters(
+    execution: MySqlStmtExecute,
+    *,
+    parameter_count: int,
+    previous_types: tuple[MySqlParameterType, ...] | None = None,
+) -> MySqlStmtExecuteParameters:
+    """Decode a COM_STMT_EXECUTE binary parameter payload strictly."""
+
+    if parameter_count < 0:
+        raise ValueError("parameter_count cannot be negative")
+
+    if execution.iteration_count != 1:
+        raise MySqlProtocolError(
+            "COM_STMT_EXECUTE iteration count must be 1"
+        )
+
+    if execution.flags not in {0, 1, 2, 4}:
+        raise MySqlProtocolError(
+            "COM_STMT_EXECUTE contains unsupported cursor flags "
+            f"0x{execution.flags:02X}"
+        )
+
+    payload = execution.parameter_payload
+    if parameter_count == 0:
+        if payload:
+            raise MySqlProtocolError(
+                "COM_STMT_EXECUTE without parameters contains trailing data"
+            )
+        return MySqlStmtExecuteParameters(
+            null_bitmap=b"",
+            new_params_bound=False,
+            parameter_types=(),
+            parameters=(),
+        )
+
+    null_bitmap_size = (parameter_count + 7) // 8
+    minimum_size = null_bitmap_size + 1
+    if len(payload) < minimum_size:
+        raise MySqlProtocolError(
+            "COM_STMT_EXECUTE parameter metadata is truncated"
+        )
+
+    null_bitmap = payload[:null_bitmap_size]
+    offset = null_bitmap_size
+    new_params_bound_flag = payload[offset]
+    offset += 1
+
+    if new_params_bound_flag not in {0, 1}:
+        raise MySqlProtocolError(
+            "COM_STMT_EXECUTE new_params_bound_flag must be 0 or 1"
+        )
+
+    if new_params_bound_flag:
+        types_end = offset + (parameter_count * 2)
+        if types_end > len(payload):
+            raise MySqlProtocolError(
+                "COM_STMT_EXECUTE parameter type metadata is truncated"
+            )
+
+        parameter_types = []
+        for index in range(parameter_count):
+            type_offset = offset + (index * 2)
+            type_code = payload[type_offset]
+            flags = payload[type_offset + 1]
+            if flags & ~MYSQL_UNSIGNED_FLAG:
+                raise MySqlProtocolError(
+                    "COM_STMT_EXECUTE parameter type metadata contains "
+                    f"unsupported flags for parameter {index}"
+                )
+            parameter_types.append(
+                MySqlParameterType(
+                    type_code=type_code,
+                    unsigned=bool(flags & MYSQL_UNSIGNED_FLAG),
+                )
+            )
+        types = tuple(parameter_types)
+        offset = types_end
+
+    else:
+        if previous_types is None:
+            raise MySqlProtocolError(
+                "COM_STMT_EXECUTE reuses parameter types before metadata "
+                "has been registered"
+            )
+        if len(previous_types) != parameter_count:
+            raise MySqlProtocolError(
+                "Stored COM_STMT_EXECUTE parameter metadata count does "
+                "not match the prepared statement"
+            )
+        types = previous_types
+
+    parameters: list[MySqlDecodedParameter] = []
+    for index, type_metadata in enumerate(types):
+        _validate_stmt_parameter_type(
+            index=index,
+            type_metadata=type_metadata,
+        )
+        is_null = bool(
+            null_bitmap[index // 8] & (1 << (index % 8))
+        )
+        if is_null or type_metadata.type_code == MYSQL_TYPE_NULL:
+            parameters.append(
+                MySqlDecodedParameter(
+                    type_metadata=type_metadata,
+                    value=None,
+                    sql_literal="NULL",
+                )
+            )
+            continue
+
+        parameter, offset = _decode_stmt_parameter(
+            payload,
+            offset,
+            index=index,
+            type_metadata=type_metadata,
+        )
+        parameters.append(parameter)
+
+    if offset != len(payload):
+        raise MySqlProtocolError(
+            "COM_STMT_EXECUTE parameter payload contains trailing data"
+        )
+
+    return MySqlStmtExecuteParameters(
+        null_bitmap=null_bitmap,
+        new_params_bound=bool(new_params_bound_flag),
+        parameter_types=types,
+        parameters=tuple(parameters),
+    )
+
+
+def reconstruct_stmt_execute_sql(
+    sql_template: str,
+    parameters: tuple[MySqlDecodedParameter, ...],
+) -> str:
+    """Replace real MySQL placeholders without touching quoted text."""
+
+    literals = iter(parameter.sql_literal for parameter in parameters)
+    output: list[str] = []
+    index = 0
+    replacements = 0
+    state = "sql"
+
+    while index < len(sql_template):
+        char = sql_template[index]
+        following = (
+            sql_template[index + 1]
+            if index + 1 < len(sql_template)
+            else ""
+        )
+
+        if state == "sql":
+            if char == "?":
+                try:
+                    output.append(next(literals))
+                except StopIteration as exc:
+                    raise MySqlProtocolError(
+                        "Prepared SQL contains more placeholders than "
+                        "COM_STMT_PREPARE reported"
+                    ) from exc
+                replacements += 1
+            elif char in {"'", '"', "`"}:
+                state = char
+                output.append(char)
+            elif char == "#":
+                state = "line_comment"
+                output.append(char)
+            elif char == "-" and following == "-" and (
+                index + 2 == len(sql_template)
+                or sql_template[index + 2].isspace()
+            ):
+                state = "line_comment"
+                output.extend((char, following))
+                index += 1
+            elif char == "/" and following == "*":
+                comment_prefix = sql_template[index:index + 4].upper()
+                if comment_prefix.startswith("/*!") or (
+                    comment_prefix == "/*M!"
+                ):
+                    raise MySqlProtocolError(
+                        "Prepared SQL contains an executable comment and "
+                        "cannot be reconstructed safely"
+                    )
+                state = "block_comment"
+                output.extend((char, following))
+                index += 1
+            else:
+                output.append(char)
+
+        elif state in {"'", '"', "`"}:
+            output.append(char)
+            if char == "\\":
+                raise MySqlProtocolError(
+                    "Prepared SQL contains a mode-dependent backslash "
+                    "escape and cannot be reconstructed safely"
+                )
+            if char == state:
+                if following == state:
+                    output.append(following)
+                    index += 1
+                else:
+                    state = "sql"
+
+        elif state == "line_comment":
+            output.append(char)
+            if char in {"\n", "\r"}:
+                state = "sql"
+
+        else:
+            output.append(char)
+            if char == "*" and following == "/":
+                output.append(following)
+                index += 1
+                state = "sql"
+
+        index += 1
+
+    if state in {"'", '"', "`", "block_comment"}:
+        raise MySqlProtocolError(
+            "Prepared SQL has an unterminated quoted value or comment"
+        )
+
+    try:
+        next(literals)
+    except StopIteration:
+        pass
+    else:
+        raise MySqlProtocolError(
+            "Prepared SQL contains fewer placeholders than "
+            "COM_STMT_PREPARE reported"
+        )
+
+    if replacements != len(parameters):
+        raise MySqlProtocolError(
+            "Prepared SQL placeholder count does not match parameter count"
+        )
+
+    return "".join(output)
+
+
+def _decode_stmt_parameter(
+    payload: bytes,
+    offset: int,
+    *,
+    index: int,
+    type_metadata: MySqlParameterType,
+) -> tuple[MySqlDecodedParameter, int]:
+    type_code = type_metadata.type_code
+
+    integer_sizes = {
+        MYSQL_TYPE_TINY: 1,
+        MYSQL_TYPE_SHORT: 2,
+        MYSQL_TYPE_LONG: 4,
+        MYSQL_TYPE_LONGLONG: 8,
+        MYSQL_TYPE_INT24: 4,
+        MYSQL_TYPE_YEAR: 2,
+    }
+    if type_code in integer_sizes:
+        size = integer_sizes[type_code]
+        raw, offset = _take_stmt_bytes(
+            payload, offset, size, index=index
+        )
+        value = int.from_bytes(
+            raw,
+            "little",
+            signed=not type_metadata.unsigned,
+        )
+        return (
+            MySqlDecodedParameter(
+                type_metadata=type_metadata,
+                value=value,
+                sql_literal=str(value),
+            ),
+            offset,
+        )
+
+    if type_metadata.unsigned:
+        raise MySqlProtocolError(
+            "COM_STMT_EXECUTE unsigned flag is only supported for "
+            f"integer parameter {index}"
+        )
+
+    if type_code in {MYSQL_TYPE_FLOAT, MYSQL_TYPE_DOUBLE}:
+        size = 4 if type_code == MYSQL_TYPE_FLOAT else 8
+        raw, offset = _take_stmt_bytes(
+            payload, offset, size, index=index
+        )
+        value = struct.unpack("<f" if size == 4 else "<d", raw)[0]
+        if not math.isfinite(value):
+            raise MySqlProtocolError(
+                "COM_STMT_EXECUTE floating-point parameter "
+                f"{index} is not finite"
+            )
+        return (
+            MySqlDecodedParameter(
+                type_metadata=type_metadata,
+                value=value,
+                sql_literal=repr(value),
+            ),
+            offset,
+        )
+
+    if type_code in {
+        MYSQL_TYPE_VARCHAR,
+        MYSQL_TYPE_VAR_STRING,
+        MYSQL_TYPE_STRING,
+        MYSQL_TYPE_BIT,
+    }:
+        value, offset = _read_stmt_lenenc_bytes(
+            payload, offset, index=index
+        )
+        return (
+            MySqlDecodedParameter(
+                type_metadata=type_metadata,
+                value=value,
+                sql_literal=f"X'{value.hex()}'",
+            ),
+            offset,
+        )
+
+    temporal_types = {
+        MYSQL_TYPE_TIMESTAMP,
+        MYSQL_TYPE_DATE,
+        MYSQL_TYPE_TIME,
+        MYSQL_TYPE_DATETIME,
+        MYSQL_TYPE_NEWDATE,
+        MYSQL_TYPE_TIMESTAMP2,
+        MYSQL_TYPE_DATETIME2,
+        MYSQL_TYPE_TIME2,
+    }
+    decimal_types = {MYSQL_TYPE_DECIMAL, MYSQL_TYPE_NEWDECIMAL}
+    blob_types = {
+        MYSQL_TYPE_TINY_BLOB,
+        MYSQL_TYPE_MEDIUM_BLOB,
+        MYSQL_TYPE_LONG_BLOB,
+        MYSQL_TYPE_BLOB,
+    }
+
+    if type_code in temporal_types:
+        family = "temporal"
+    elif type_code in decimal_types:
+        family = "decimal"
+    elif type_code in blob_types:
+        family = "blob"
+    else:
+        family = "unsupported"
+
+    raise MySqlProtocolError(
+        f"COM_STMT_EXECUTE {family} parameter type "
+        f"0x{type_code:02X} is not safely inspectable for parameter {index}"
+    )
+
+
+def _validate_stmt_parameter_type(
+    *,
+    index: int,
+    type_metadata: MySqlParameterType,
+) -> None:
+    type_code = type_metadata.type_code
+    integer_types = {
+        MYSQL_TYPE_TINY,
+        MYSQL_TYPE_SHORT,
+        MYSQL_TYPE_LONG,
+        MYSQL_TYPE_LONGLONG,
+        MYSQL_TYPE_INT24,
+        MYSQL_TYPE_YEAR,
+    }
+    scalar_types = integer_types | {
+        MYSQL_TYPE_FLOAT,
+        MYSQL_TYPE_DOUBLE,
+        MYSQL_TYPE_NULL,
+        MYSQL_TYPE_VARCHAR,
+        MYSQL_TYPE_VAR_STRING,
+        MYSQL_TYPE_STRING,
+        MYSQL_TYPE_BIT,
+    }
+
+    if type_metadata.unsigned and type_code not in integer_types:
+        raise MySqlProtocolError(
+            "COM_STMT_EXECUTE unsigned flag is only supported for "
+            f"integer parameter {index}"
+        )
+
+    if type_code in scalar_types:
+        return
+
+    temporal_types = {
+        MYSQL_TYPE_TIMESTAMP,
+        MYSQL_TYPE_DATE,
+        MYSQL_TYPE_TIME,
+        MYSQL_TYPE_DATETIME,
+        MYSQL_TYPE_NEWDATE,
+        MYSQL_TYPE_TIMESTAMP2,
+        MYSQL_TYPE_DATETIME2,
+        MYSQL_TYPE_TIME2,
+    }
+    decimal_types = {MYSQL_TYPE_DECIMAL, MYSQL_TYPE_NEWDECIMAL}
+    blob_types = {
+        MYSQL_TYPE_TINY_BLOB,
+        MYSQL_TYPE_MEDIUM_BLOB,
+        MYSQL_TYPE_LONG_BLOB,
+        MYSQL_TYPE_BLOB,
+    }
+
+    if type_code in temporal_types:
+        family = "temporal"
+    elif type_code in decimal_types:
+        family = "decimal"
+    elif type_code in blob_types:
+        family = "blob"
+    else:
+        family = "unsupported"
+
+    raise MySqlProtocolError(
+        f"COM_STMT_EXECUTE {family} parameter type "
+        f"0x{type_code:02X} is not safely inspectable for parameter {index}"
+    )
+
+
+def _take_stmt_bytes(
+    payload: bytes,
+    offset: int,
+    size: int,
+    *,
+    index: int,
+) -> tuple[bytes, int]:
+    end = offset + size
+    if end > len(payload):
+        raise MySqlProtocolError(
+            f"COM_STMT_EXECUTE parameter {index} is truncated"
+        )
+    return payload[offset:end], end
+
+
+def _read_stmt_lenenc_bytes(
+    payload: bytes,
+    offset: int,
+    *,
+    index: int,
+) -> tuple[bytes, int]:
+    if offset >= len(payload):
+        raise MySqlProtocolError(
+            f"COM_STMT_EXECUTE parameter {index} is truncated"
+        )
+
+    marker = payload[offset]
+    offset += 1
+    if marker < 0xFB:
+        size = marker
+    elif marker == 0xFC:
+        raw_size, offset = _take_stmt_bytes(
+            payload, offset, 2, index=index
+        )
+        size = int.from_bytes(raw_size, "little")
+    elif marker == 0xFD:
+        raw_size, offset = _take_stmt_bytes(
+            payload, offset, 3, index=index
+        )
+        size = int.from_bytes(raw_size, "little")
+    elif marker == 0xFE:
+        raw_size, offset = _take_stmt_bytes(
+            payload, offset, 8, index=index
+        )
+        size = int.from_bytes(raw_size, "little")
+    else:
+        raise MySqlProtocolError(
+            "COM_STMT_EXECUTE length-encoded parameter cannot use "
+            f"marker 0x{marker:02X} for parameter {index}"
+        )
+
+    return _take_stmt_bytes(
+        payload, offset, size, index=index
     )
 
 
@@ -447,6 +1126,40 @@ def _read_length_encoded_integer(
     return int.from_bytes(payload[offset:end], "little"), end
 
 
+def _read_packet_length_encoded_integer(
+    payload: bytes,
+    offset: int,
+    *,
+    field_name: str,
+) -> tuple[int, int]:
+    if offset >= len(payload):
+        raise MySqlProtocolError(
+            f"Backend packet is missing {field_name}"
+        )
+
+    first = payload[offset]
+    offset += 1
+    if first < 0xFB:
+        return first, offset
+    if first == 0xFC:
+        size = 2
+    elif first == 0xFD:
+        size = 3
+    elif first == 0xFE:
+        size = 8
+    else:
+        raise MySqlProtocolError(
+            f"Backend packet contains NULL for {field_name}"
+        )
+
+    end = offset + size
+    if end > len(payload):
+        raise MySqlProtocolError(
+            f"Backend packet has truncated {field_name}"
+        )
+    return int.from_bytes(payload[offset:end], "little"), end
+
+
 def parse_handshake_response(
     payload: bytes,
 ) -> MySqlHandshakeResponse:
@@ -456,6 +1169,10 @@ def parse_handshake_response(
         )
 
     capability_flags = int.from_bytes(payload[0:4], "little")
+    if not capability_flags & CLIENT_MYSQL:
+        capability_flags |= (
+            int.from_bytes(payload[28:32], "little") << 32
+        )
 
     if capability_flags & CLIENT_SSL and len(payload) == 32:
         return MySqlHandshakeResponse(

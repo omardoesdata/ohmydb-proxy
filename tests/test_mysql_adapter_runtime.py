@@ -106,5 +106,6 @@ def test_mysql_adapter_runtime_capabilities():
     assert adapter.default_port == 3306
     assert adapter.capabilities.network_proxy is True
     assert adapter.capabilities.simple_query is True
-    assert adapter.capabilities.prepared_statements is False
+    assert adapter.capabilities.prepared_statements is True
+    assert adapter.capabilities.transaction_state is True
     assert adapter.capabilities.tls_termination is False
