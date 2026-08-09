@@ -160,3 +160,5 @@ transaction-state tracking.
 > v0.7 milestone: MySQL/MariaDB prepared statements and transaction-state
 > support have passed real Connector/Python, MariaDB Connector/Python,
 > concurrency, recovery, packaging, and fresh-wheel validation.
+
+> Hardening note: Windows concurrency validation runs mysql-connector-python and MariaDB Connector/Python in separate subprocesses because loading both native connectors concurrently in one Python process can trigger an external native-library access violation.
