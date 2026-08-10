@@ -34,6 +34,42 @@ class BackendMessage:
     raw: bytes
 
 
+class StartupFramer:
+    """Incrementally frame one bounded PostgreSQL startup message."""
+
+    def __init__(self, max_message_bytes: int = DEFAULT_MAX_MESSAGE_BYTES) -> None:
+        if max_message_bytes < 8:
+            raise ValueError("max_message_bytes must be at least 8")
+        self._buffer = bytearray()
+        self._max_message_bytes = max_message_bytes
+
+    def push(self, chunk: bytes) -> bytes | None:
+        self._buffer.extend(chunk)
+        if len(self._buffer) < 4:
+            return None
+
+        declared_length = struct.unpack(">i", self._buffer[:4])[0]
+        if declared_length < 8:
+            raise ProtocolMessageError(
+                f"invalid PostgreSQL startup length {declared_length}; minimum is 8"
+            )
+        if declared_length > self._max_message_bytes:
+            raise ProtocolMessageError(
+                f"PostgreSQL startup size {declared_length} exceeds configured "
+                f"maximum {self._max_message_bytes}"
+            )
+        if len(self._buffer) < declared_length:
+            return None
+        if len(self._buffer) != declared_length:
+            raise ProtocolMessageError(
+                "PostgreSQL startup packet has trailing bytes"
+            )
+
+        raw = bytes(self._buffer)
+        self._buffer.clear()
+        return raw
+
+
 class _MessageFramer:
     def __init__(self, max_message_bytes: int = DEFAULT_MAX_MESSAGE_BYTES) -> None:
         if max_message_bytes < 5:

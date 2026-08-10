@@ -57,6 +57,29 @@ def read_boolean(variable_name: str, default: bool) -> bool:
     )
 
 
+def read_positive_int(
+    variable_name: str,
+    default: int,
+    minimum: int = 1,
+) -> int:
+    value = int(os.environ.get(variable_name, str(default)))
+    if value < minimum:
+        raise ValueError(
+            f"{variable_name} must be at least {minimum}"
+        )
+    return value
+
+
+def read_positive_float(
+    variable_name: str,
+    default: float,
+) -> float:
+    value = float(os.environ.get(variable_name, str(default)))
+    if value <= 0:
+        raise ValueError(f"{variable_name} must be positive")
+    return value
+
+
 def read_fail_safe_mode() -> FailSafeMode:
     raw_value = os.environ.get(
         "FAIL_SAFE_MODE",
@@ -110,6 +133,20 @@ def build_audit_logger() -> JsonlAuditLogger:
             "logs/sql-safety-audit.jsonl",
         ),
         enabled=read_boolean("AUDIT_ENABLED", True),
+        max_file_bytes=read_positive_int(
+            "AUDIT_MAX_FILE_BYTES",
+            10 * 1024 * 1024,
+            minimum=1024,
+        ),
+        max_backups=read_positive_int(
+            "AUDIT_MAX_BACKUPS",
+            3,
+        ),
+        max_field_chars=read_positive_int(
+            "AUDIT_MAX_FIELD_CHARS",
+            4096,
+            minimum=16,
+        ),
     )
 
 
@@ -169,6 +206,28 @@ def build_options() -> ProxyOptions:
                 "ESTIMATE_TIMEOUT_SECONDS",
                 "8",
             )
+        ),
+        backend_connect_timeout_seconds=read_positive_float(
+            "BACKEND_CONNECT_TIMEOUT_SECONDS",
+            10.0,
+        ),
+        socket_read_timeout_seconds=read_positive_float(
+            "SOCKET_READ_TIMEOUT_SECONDS",
+            300.0,
+        ),
+        max_message_bytes=read_positive_int(
+            "MAX_PROTOCOL_MESSAGE_BYTES",
+            64 * 1024 * 1024,
+            minimum=1024,
+        ),
+        max_session_items=read_positive_int(
+            "MAX_SESSION_ITEMS",
+            256,
+        ),
+        max_session_state_bytes=read_positive_int(
+            "MAX_SESSION_STATE_BYTES",
+            8 * 1024 * 1024,
+            minimum=1024,
         ),
         policy_config=build_policy_config(),
         audit_logger=build_audit_logger(),

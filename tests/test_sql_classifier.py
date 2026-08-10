@@ -1,3 +1,5 @@
+import pytest
+
 from sql_safety_proxy.sql_classifier import classify
 
 
@@ -47,3 +49,31 @@ def test_rollback_is_safe_transaction_control():
     result = classify("ROLLBACK", "postgres")
     assert result.risk == "safe"
     assert result.statement_type == "ROLLBACK"
+
+
+@pytest.mark.parametrize(
+    "sql,dialect",
+    [
+        ("SET NAMES 'utf8mb4' COLLATE 'utf8mb4_general_ci'", "mysql"),
+        ("SET autocommit=0", "mysql"),
+        ("SET SESSION TRANSACTION READ ONLY", "mysql"),
+        ("SET search_path TO public", "postgres"),
+    ],
+)
+def test_session_local_set_is_safe(sql, dialect):
+    result = classify(sql, dialect=dialect)
+    assert result.risk == "safe"
+    assert result.statement_type == "SET"
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SET GLOBAL max_connections=100",
+        "SET PASSWORD = 'secret'",
+        "SET PERSIST max_connections=100",
+    ],
+)
+def test_global_or_credential_set_is_not_auto_allowed(sql):
+    result = classify(sql, dialect="mysql")
+    assert result.risk != "safe"

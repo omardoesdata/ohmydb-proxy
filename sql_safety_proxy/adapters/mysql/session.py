@@ -37,6 +37,8 @@ class MySqlPreparedStatement:
 @dataclass
 class MySqlSessionState:
     database: str
+    max_prepared_statements: int = 256
+    max_state_bytes: int = 8 * 1024 * 1024
     pending_database: str | None = None
     pending_statement_sql: str | None = None
     pending_prepare_event: asyncio.Event | None = None
@@ -77,6 +79,32 @@ class MySqlSessionState:
         if self.has_pending_lifecycle_operation:
             raise MySqlProtocolError(
                 "A MySQL command acknowledgment is already pending"
+            )
+
+    def _require_prepared_capacity(
+        self,
+        statement_id: int,
+        sql: str,
+    ) -> None:
+        if (
+            statement_id not in self.prepared_statements
+            and len(self.prepared_statements)
+            >= self.max_prepared_statements
+        ):
+            raise MySqlProtocolError(
+                "MySQL prepared-statement registry limit exceeded"
+            )
+
+        current = sum(
+            len(item.sql.encode("utf-8"))
+            for item in self.prepared_statements.values()
+        )
+        previous = self.prepared_statements.get(statement_id)
+        if previous is not None:
+            current -= len(previous.sql.encode("utf-8"))
+        if current + len(sql.encode("utf-8")) > self.max_state_bytes:
+            raise MySqlProtocolError(
+                "MySQL per-session state size limit exceeded"
             )
 
     def begin_database_change(self, database: str) -> None:
@@ -156,6 +184,10 @@ class MySqlSessionState:
                 "No MySQL statement prepare is pending"
             )
 
+        self._require_prepared_capacity(
+            statement_id,
+            self.pending_statement_sql,
+        )
         statement = MySqlPreparedStatement(
             statement_id=statement_id,
             sql=self.pending_statement_sql,
@@ -206,6 +238,10 @@ class MySqlSessionState:
                 "Duplicate COM_STMT_PREPARE_OK packet"
             )
 
+        self._require_prepared_capacity(
+            statement_id,
+            self.pending_statement_sql,
+        )
         statement = MySqlPreparedStatement(
             statement_id=statement_id,
             sql=self.pending_statement_sql,

@@ -38,11 +38,11 @@ def classify(
             for statement in sqlglot.parse(sql, read=dialect)
             if statement is not None
         ]
-    except Exception as exc:
+    except Exception:
         return Classification(
             risk="unknown",
             statement_type="UNPARSEABLE",
-            reason=f"Could not parse SQL safely: {exc}",
+            reason="Could not parse SQL safely",
             severity=Severity.HIGH,
             statement_count=0,
         )
@@ -90,6 +90,27 @@ def classify(
             impact_kind="transaction",
             severity=Severity.LOW,
         )
+
+    if isinstance(ast, exp.Set):
+        normalized = ast.sql(dialect=dialect).upper()
+        has_global_scope = any(
+            bool(item.args.get("global_"))
+            or str(item.args.get("kind") or "").upper() == "GLOBAL"
+            for item in ast.expressions
+            if isinstance(item, exp.SetItem)
+        )
+        if (
+            not has_global_scope
+            and "PASSWORD" not in normalized
+            and "PERSIST" not in normalized
+        ):
+            return Classification(
+                risk="safe",
+                statement_type="SET",
+                reason="Session-local configuration statement",
+                impact_kind="session",
+                severity=Severity.LOW,
+            )
 
     if isinstance(ast, exp.Select):
         return Classification(

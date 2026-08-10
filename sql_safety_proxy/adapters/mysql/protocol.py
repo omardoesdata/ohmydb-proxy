@@ -601,6 +601,14 @@ def parse_stmt_execute_parameters(
         )
 
     null_bitmap = payload[:null_bitmap_size]
+    remaining_bits = parameter_count % 8
+    if (
+        remaining_bits
+        and null_bitmap[-1] & (~((1 << remaining_bits) - 1) & 0xFF)
+    ):
+        raise MySqlProtocolError(
+            "COM_STMT_EXECUTE NULL bitmap sets out-of-range parameter bits"
+        )
     offset = null_bitmap_size
     new_params_bound_flag = payload[offset]
     offset += 1

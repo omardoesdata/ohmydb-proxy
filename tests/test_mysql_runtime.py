@@ -109,6 +109,7 @@ async def test_listener_handler_carries_proxy_options(
     handler = captured["handler"]
 
     assert handler.keywords["opts"] is opts
+    assert isinstance(handler.keywords["connection_tasks"], set)
     assert captured["host"] == "0.0.0.0"
     assert captured["port"] == 3307
 
@@ -132,7 +133,7 @@ async def test_listener_prints_bound_and_backend_addresses(
     assert "MySQL/MariaDB safety proxy listening" in output
     assert "0.0.0.0" in output
     assert "3307" in output
-    assert "127.0.0.1:3306" in output
+    assert "configured backend" in output
 
 
 @pytest.mark.asyncio

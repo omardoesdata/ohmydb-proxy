@@ -154,9 +154,14 @@ The next development phase adds safe MySQL/MariaDB prepared-statement
 inspection, binary parameter decoding, statement lifecycle handling, and
 transaction-state tracking.
 
-> v0.7 progress: prepared-execution inspection is under active validation.
-> Adapter capability flags remain disabled until real MariaDB integration passes.
-
 > v0.7 milestone: MySQL/MariaDB prepared statements and transaction-state
-> support have passed real Connector/Python, MariaDB Connector/Python,
-> concurrency, recovery, packaging, and fresh-wheel validation.
+> support have passed real mysql-connector-python validation against MariaDB,
+> isolated PostgreSQL and MySQL concurrency/recovery checks, packaging, and
+> fresh-wheel validation. The corresponding adapter capability flags are enabled.
+
+> Windows connector limitation: MariaDB Connector/Python native runtime
+> validation is skipped because its native extension reproducibly crashes
+> python.exe during concurrent cursor execution in this environment. MariaDB
+> server compatibility remains covered through mysql-connector-python. A Linux
+> MariaDB Connector/Python gate is required before the release candidate; no
+> proxy lifecycle defect has been proven.
