@@ -164,3 +164,5 @@ transaction-state tracking.
 > Hardening note: Windows concurrency validation runs mysql-connector-python and MariaDB Connector/Python in separate subprocesses because loading both native connectors concurrently in one Python process can trigger an external native-library access violation.
 
 > Additional Windows hardening observation: mysql-connector-python passed repeated isolated subprocess validation, while MariaDB Connector/Python showed an intermittent native python.exe access violation in an isolated child process. This is currently treated as a connector/runtime compatibility issue under investigation, not a proven proxy lifecycle defect.
+
+> v0.7 engineering checkpoint: the validated hardening milestone is now committed on feature/v0.7-mysql-prepared-transactions at da7a57e, with 320 tests passing plus real PostgreSQL, MariaDB-server, concurrency, packaging, and fresh-wheel validation.
