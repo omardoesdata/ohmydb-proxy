@@ -165,3 +165,7 @@ transaction-state tracking.
 > server compatibility remains covered through mysql-connector-python. A Linux
 > MariaDB Connector/Python gate is required before the release candidate; no
 > proxy lifecycle defect has been proven.
+
+> Additional Windows hardening observation: mysql-connector-python passed repeated isolated subprocess validation, while MariaDB Connector/Python showed an intermittent native python.exe access violation in an isolated child process. This is currently treated as a connector/runtime compatibility issue under investigation, not a proven proxy lifecycle defect.
+
+> v0.7 engineering checkpoint: the validated hardening milestone is now committed on feature/v0.7-mysql-prepared-transactions at da7a57e, with 320 tests passing plus real PostgreSQL, MariaDB-server, concurrency, packaging, and fresh-wheel validation.
