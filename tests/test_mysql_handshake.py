@@ -7,6 +7,7 @@ from sql_safety_proxy.adapters.mysql.protocol import (
     CLIENT_PLUGIN_AUTH,
     CLIENT_SECURE_CONNECTION,
     CLIENT_SSL,
+    MARIADB_CLIENT_CACHE_METADATA,
     MySqlProtocolError,
     parse_handshake_response,
 )
@@ -58,6 +59,15 @@ def test_parse_handshake_response_extracts_initial_database():
     assert result.auth_plugin == "caching_sha2_password"
     assert result.is_ssl_request is False
     assert result.capability_flags & CLIENT_CONNECT_WITH_DB
+
+
+def test_parse_handshake_response_reads_mariadb_extended_capabilities():
+    payload = bytearray(build_handshake_response())
+    payload[28:32] = (1 << 4).to_bytes(4, "little")
+
+    result = parse_handshake_response(bytes(payload))
+
+    assert result.capability_flags & MARIADB_CLIENT_CACHE_METADATA
 
 
 def test_parse_handshake_response_allows_no_initial_database():

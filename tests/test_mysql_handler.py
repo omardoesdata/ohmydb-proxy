@@ -8,6 +8,7 @@ import pytest
 from sql_safety_proxy.adapters.mysql.handler import (
     handle_mysql_protocol_gap,
     handle_mysql_query,
+    handle_mysql_stmt_execute,
 )
 from sql_safety_proxy.adapters.mysql.protocol import (
     MySqlLogicalMessage,
@@ -268,3 +269,124 @@ async def test_invalid_utf8_query_is_rejected():
 
     assert bytes(backend.data) == b""
     assert bytes(client.data) == b""
+
+
+@pytest.mark.asyncio
+async def test_prepared_execute_audit_keeps_bound_values_private(
+    monkeypatch,
+):
+    backend = MemoryWriter()
+    client = MemoryWriter()
+    logger = SimpleNamespace(log=AsyncMock())
+    message, _ = query_message("SELECT 1")
+    monkeypatch.setattr(
+        "sql_safety_proxy.adapters.mysql.handler._estimate",
+        AsyncMock(
+            return_value=(
+                None,
+                "database rejected X'736563726574'",
+            )
+        ),
+    )
+
+    forwarded = await handle_mysql_stmt_execute(
+        message=message,
+        inspection_sql=(
+            "SELECT * FROM users WHERE token = X'736563726574'"
+        ),
+        sql_description="MYSQL_PREPARED_STATEMENT_42",
+        estimate_safe=True,
+        database="sql_safety_v06",
+        backend_writer=backend,
+        client_writer=client,
+        opts=options(audit_logger=logger),
+    )
+
+    assert forwarded is True
+    event = logger.log.await_args.args[0]
+    assert event.sql == "MYSQL_PREPARED_STATEMENT_42"
+    assert "736563726574" not in event.sql
+    assert event.estimate_error == (
+        "Prepared-statement row-impact estimation failed"
+    )
+
+
+@pytest.mark.asyncio
+async def test_prepared_confirmation_context_contains_no_bound_sql(
+    monkeypatch,
+    capsys,
+):
+    class CaptureProvider:
+        def __init__(self):
+            self.context = None
+
+        async def confirm(self, context):
+            self.context = context
+            return False
+
+    backend = MemoryWriter()
+    client = MemoryWriter()
+    message, _ = query_message("SELECT 1")
+    provider = CaptureProvider()
+    opts = options()
+    opts.confirmation_provider = provider
+    monkeypatch.setattr(
+        "sql_safety_proxy.adapters.mysql.handler._estimate",
+        AsyncMock(return_value=(5, None)),
+    )
+
+    forwarded = await handle_mysql_stmt_execute(
+        message=message,
+        inspection_sql=(
+            "UPDATE users SET active = 0 WHERE id = 987654"
+        ),
+        sql_description="MYSQL_PREPARED_STATEMENT_42",
+        estimate_safe=True,
+        database="sql_safety_v06",
+        backend_writer=backend,
+        client_writer=client,
+        opts=opts,
+    )
+
+    assert forwarded is False
+    assert provider.context.sql == "MYSQL_PREPARED_STATEMENT_42"
+    assert provider.context.classification.preview_query is None
+    assert "987654" not in repr(provider.context)
+    assert "987654" not in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_unparseable_prepared_sql_is_sanitized_protocol_gap(
+    capsys,
+):
+    backend = MemoryWriter()
+    client = MemoryWriter()
+    logger = SimpleNamespace(log=AsyncMock())
+    message, _ = query_message("SELECT 1")
+    bound_literal = "736563726574"
+
+    forwarded = await handle_mysql_stmt_execute(
+        message=message,
+        inspection_sql=(
+            f"UPDATE users SET token = X'{bound_literal}' WHERE ("
+        ),
+        sql_description="MYSQL_PREPARED_STATEMENT_42",
+        estimate_safe=True,
+        database="sql_safety_v06",
+        backend_writer=backend,
+        client_writer=client,
+        opts=options(
+            fail_safe_mode=FailSafeMode.STRICT,
+            audit_logger=logger,
+        ),
+    )
+
+    assert forwarded is False
+    assert bytes(backend.data) == b""
+    assert bound_literal not in bytes(client.data).decode(
+        "utf-8", errors="replace"
+    )
+    assert bound_literal not in capsys.readouterr().out
+    event = logger.log.await_args.args[0]
+    assert event.sql == "MYSQL_COMMAND_0x17"
+    assert bound_literal not in repr(event)

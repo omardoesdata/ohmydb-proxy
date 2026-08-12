@@ -23,9 +23,9 @@ class MySqlAdapter(DatabaseAdapter):
     capabilities = DatabaseCapabilities(
         network_proxy=True,
         simple_query=True,
-        prepared_statements=False,
+        prepared_statements=True,
         named_portals=False,
-        transaction_state=False,
+        transaction_state=True,
         impact_estimation=True,
         tls_termination=False,
         binary_parameter_oids=False,

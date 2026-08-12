@@ -36,6 +36,8 @@ MYSQL_TLS_SQL_STATE = "HY000"
 class MySqlRelayState:
     database: str
     max_packet_bytes: int = DEFAULT_MAX_PACKET_BYTES
+    max_session_items: int = 256
+    max_session_state_bytes: int = 8 * 1024 * 1024
     client_framer: MySqlPacketFramer = field(init=False)
     backend_framer: MySqlPacketFramer = field(init=False)
     command_assembler: MySqlLogicalMessageAssembler = field(
@@ -58,7 +60,11 @@ class MySqlRelayState:
         )
 
         self.auth = MySqlAuthState(database=self.database)
-        self.session = MySqlSessionState(database=self.database)
+        self.session = MySqlSessionState(
+            database=self.database,
+            max_prepared_statements=self.max_session_items,
+            max_state_bytes=self.max_session_state_bytes,
+        )
         self.backend = MySqlBackendState(
             auth=self.auth,
             session=self.session,

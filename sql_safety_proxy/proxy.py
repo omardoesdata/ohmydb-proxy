@@ -18,6 +18,7 @@ Both execution paths pass through the same safety workflow:
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from typing import Optional
 
@@ -38,9 +39,11 @@ from .fail_safe import (
 from .param_decoder import decode_param
 from .pg_protocol import (
     BackendFramer,
+    DEFAULT_MAX_MESSAGE_BYTES,
     FrontendFramer,
     FrontendMessage,
     ProtocolMessageError,
+    StartupFramer,
     build_error_response,
     build_ready_for_query,
     is_negotiation_request,
@@ -63,6 +66,7 @@ from .sql_classifier import (
     Dialect,
     classify,
 )
+from .sanitization import safe_exception_summary, sanitize_sql
 
 
 @dataclass
@@ -80,6 +84,11 @@ class ProxyOptions:
     adapter_name: str = "postgres"
     database_name: str = "postgres"
     estimate_timeout_seconds: float = 8.0
+    backend_connect_timeout_seconds: float = 10.0
+    socket_read_timeout_seconds: float | None = 300.0
+    max_message_bytes: int = DEFAULT_MAX_MESSAGE_BYTES
+    max_session_items: int = 256
+    max_session_state_bytes: int = 8 * 1024 * 1024
 
     policy_config: PolicyConfig = field(
         default_factory=PolicyConfig
@@ -97,8 +106,49 @@ class ConnectionState:
 
     prepared_statements: dict[str, str] = field(default_factory=dict)
     portals: dict[str, BindMessage] = field(default_factory=dict)
+    max_items: int = 256
+    max_state_bytes: int = 8 * 1024 * 1024
+
+    @staticmethod
+    def _portal_bytes(name: str, bind: BindMessage) -> int:
+        return (
+            len(name.encode("utf-8"))
+            + len(bind.statement_name.encode("utf-8"))
+            + sum(
+                len(value)
+                for value in bind.param_values
+                if value is not None
+            )
+        )
+
+    def _state_bytes(self) -> int:
+        return sum(
+            len(name.encode("utf-8")) + len(query.encode("utf-8"))
+            for name, query in self.prepared_statements.items()
+        ) + sum(
+            self._portal_bytes(name, bind)
+            for name, bind in self.portals.items()
+        )
 
     def register_statement(self, name: str, query: str) -> None:
+        if (
+            name not in self.prepared_statements
+            and len(self.prepared_statements) >= self.max_items
+        ):
+            raise ProtocolMessageError(
+                "PostgreSQL prepared-statement registry limit exceeded"
+            )
+        projected = self._state_bytes()
+        previous = self.prepared_statements.get(name)
+        if previous is not None:
+            projected -= len(name.encode("utf-8")) + len(
+                previous.encode("utf-8")
+            )
+        projected += len(name.encode("utf-8")) + len(query.encode("utf-8"))
+        if projected > self.max_state_bytes:
+            raise ProtocolMessageError(
+                "PostgreSQL per-session state size limit exceeded"
+            )
         if name == "":
             self.portals = {
                 portal_name: bind
@@ -108,6 +158,22 @@ class ConnectionState:
         self.prepared_statements[name] = query
 
     def register_portal(self, bind: BindMessage) -> None:
+        if (
+            bind.portal_name not in self.portals
+            and len(self.portals) >= self.max_items
+        ):
+            raise ProtocolMessageError(
+                "PostgreSQL portal registry limit exceeded"
+            )
+        projected = self._state_bytes()
+        previous = self.portals.get(bind.portal_name)
+        if previous is not None:
+            projected -= self._portal_bytes(bind.portal_name, previous)
+        projected += self._portal_bytes(bind.portal_name, bind)
+        if projected > self.max_state_bytes:
+            raise ProtocolMessageError(
+                "PostgreSQL per-session state size limit exceeded"
+            )
         self.portals[bind.portal_name] = bind
 
     def close_statement(self, name: str) -> None:
@@ -131,31 +197,41 @@ async def _pipe_backend(
     reader: asyncio.StreamReader,
     writer: asyncio.StreamWriter,
     state: ConnectionState,
+    *,
+    max_message_bytes: int = DEFAULT_MAX_MESSAGE_BYTES,
+    read_timeout_seconds: float | None = None,
 ) -> None:
     """Forward backend responses while tracking transaction state."""
 
-    framer = BackendFramer()
+    framer = BackendFramer(max_message_bytes=max_message_bytes)
     try:
         while True:
-            chunk = await reader.read(65536)
+            read = reader.read(65536)
+            chunk = (
+                await asyncio.wait_for(read, timeout=read_timeout_seconds)
+                if read_timeout_seconds is not None
+                else await read
+            )
             if not chunk:
                 break
 
-            try:
-                messages = framer.push(chunk)
-                for message in messages:
-                    if message.type == "Z":
-                        state.update_transaction_status(
-                            parse_ready_for_query_status(message.payload)
-                        )
-            except ProtocolMessageError as exc:
-                print(f"[proxy] backend protocol warning: {exc}")
+            messages = framer.push(chunk)
+            for message in messages:
+                if message.type == "Z":
+                    state.update_transaction_status(
+                        parse_ready_for_query_status(message.payload)
+                    )
 
             writer.write(chunk)
             await writer.drain()
 
-    except (ConnectionResetError, BrokenPipeError):
+    except (ConnectionResetError, BrokenPipeError, asyncio.TimeoutError):
         pass
+    except ProtocolMessageError:
+        print(
+            "[proxy] PostgreSQL backend protocol error; "
+            "connection closed fail-safe"
+        )
     finally:
         writer.close()
 
@@ -194,7 +270,9 @@ async def _estimate(
         return rows, None
 
     except Exception as exc:
-        return None, str(exc)
+        return None, safe_exception_summary(
+            exc, "row-impact estimation"
+        )
 
 
 def _print_policy_result(
@@ -267,7 +345,7 @@ async def _write_audit_event(
         # after a safety decision has already been made.
         print(
             "[proxy] warning: failed to write audit event: "
-            f"{exc}"
+            f"{safe_exception_summary(exc, 'audit write')}"
         )
 
 
@@ -290,8 +368,10 @@ async def _evaluate_and_decide(
         config=opts.policy_config,
     )
 
+    display_sql = sanitize_sql(sql)
+
     _print_policy_result(
-        sql=sql,
+        sql=display_sql,
         classification=classification,
         decision=decision,
         estimated_rows=estimated_rows,
@@ -309,7 +389,7 @@ async def _evaluate_and_decide(
 
     else:
         context = QueryContext(
-            sql=sql,
+            sql=display_sql,
             classification=classification,
             estimated_rows=estimated_rows,
             estimate_error=estimate_error,
@@ -338,7 +418,7 @@ async def _evaluate_and_decide(
         )
 
     await _write_audit_event(
-        sql=sql,
+        sql=display_sql,
         protocol=protocol,
         classification=classification,
         decision=decision,
@@ -553,8 +633,7 @@ async def _handle_execute(
         await _handle_protocol_gap(
             protocol="extended",
             reason=(
-                "Execute referenced unknown portal "
-                f"{execute.portal_name!r}"
+                "Execute referenced an unknown portal"
             ),
             sql="<unavailable>",
             client_writer=client_writer,
@@ -575,8 +654,7 @@ async def _handle_execute(
         await _handle_protocol_gap(
             protocol="extended",
             reason=(
-                "Portal references unknown prepared statement "
-                f"{bind.statement_name!r}"
+                "Portal references an unknown prepared statement"
             ),
             sql="<unavailable>",
             client_writer=client_writer,
@@ -755,26 +833,48 @@ async def _handle_client(
         asyncio.StreamWriter
     ] = None
 
-    framer = FrontendFramer()
-    state = ConnectionState()
+    framer = FrontendFramer(max_message_bytes=opts.max_message_bytes)
+    startup_framer = StartupFramer(
+        max_message_bytes=opts.max_message_bytes
+    )
+    state = ConnectionState(
+        max_items=opts.max_session_items,
+        max_state_bytes=opts.max_session_state_bytes,
+    )
     past_startup = False
+    backend_task: asyncio.Task[None] | None = None
 
     try:
         while True:
-            chunk = await reader.read(65536)
+            read = reader.read(65536)
+            chunk = (
+                await asyncio.wait_for(
+                    read,
+                    timeout=opts.socket_read_timeout_seconds,
+                )
+                if opts.socket_read_timeout_seconds is not None
+                else await read
+            )
 
             if not chunk:
                 break
 
             if not past_startup:
-                if is_negotiation_request(chunk):
+                startup_message = startup_framer.push(chunk)
+                if startup_message is None:
+                    continue
+
+                if is_negotiation_request(startup_message):
                     # The proxy currently does not terminate TLS.
                     writer.write(b"N")
                     await writer.drain()
+                    startup_framer = StartupFramer(
+                        max_message_bytes=opts.max_message_bytes
+                    )
                     continue
 
                 params = parse_startup_params(
-                    chunk
+                    startup_message
                 )
 
                 state.database = (
@@ -784,22 +884,29 @@ async def _handle_client(
                 )
 
                 backend_reader, backend_writer = (
-                    await asyncio.open_connection(
-                        opts.target_host,
-                        opts.target_port,
+                    await asyncio.wait_for(
+                        asyncio.open_connection(
+                            opts.target_host,
+                            opts.target_port,
+                        ),
+                        timeout=opts.backend_connect_timeout_seconds,
                     )
                 )
 
-                backend_writer.write(chunk)
+                backend_writer.write(startup_message)
                 await backend_writer.drain()
 
                 past_startup = True
 
-                asyncio.create_task(
+                backend_task = asyncio.create_task(
                     _pipe_backend(
                         backend_reader,
                         writer,
                         state,
+                        max_message_bytes=opts.max_message_bytes,
+                        read_timeout_seconds=(
+                            opts.socket_read_timeout_seconds
+                        ),
                     )
                 )
 
@@ -834,20 +941,41 @@ async def _handle_client(
     except (
         ConnectionResetError,
         BrokenPipeError,
+        asyncio.TimeoutError,
     ):
         pass
 
     except Exception as exc:
         print(
             "[proxy] client connection error: "
-            f"{exc}"
+            f"{safe_exception_summary(exc, 'PostgreSQL client session')}"
         )
 
     finally:
+        if backend_task is not None and not backend_task.done():
+            backend_task.cancel()
+        if backend_task is not None:
+            await asyncio.gather(
+                backend_task,
+                return_exceptions=True,
+            )
+
         writer.close()
+        with suppress(
+            ConnectionResetError,
+            BrokenPipeError,
+            asyncio.CancelledError,
+        ):
+            await writer.wait_closed()
 
         if backend_writer:
             backend_writer.close()
+            with suppress(
+                ConnectionResetError,
+                BrokenPipeError,
+                asyncio.CancelledError,
+            ):
+                await backend_writer.wait_closed()
 
 
 async def start_postgres_proxy(
@@ -855,19 +983,30 @@ async def start_postgres_proxy(
 ) -> None:
     """Start the PostgreSQL protocol runtime."""
 
+    connection_tasks: set[asyncio.Task[None]] = set()
+
+    async def tracked_client(
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+    ) -> None:
+        task = asyncio.current_task()
+        if task is not None:
+            connection_tasks.add(task)
+        try:
+            await _handle_client(reader, writer, opts)
+        finally:
+            if task is not None:
+                connection_tasks.discard(task)
+
     server = await asyncio.start_server(
-        lambda reader, writer: _handle_client(
-            reader,
-            writer,
-            opts,
-        ),
+        tracked_client,
         "127.0.0.1",
         opts.listen_port,
     )
 
     print(
         f"[proxy] listening on 127.0.0.1:{opts.listen_port}, "
-        f"protecting {opts.target_host}:{opts.target_port}"
+        "protecting the configured PostgreSQL backend"
     )
 
     print(
@@ -905,12 +1044,18 @@ async def start_postgres_proxy(
         )
 
         print(
-            f"[proxy] audit logging: {status}, "
-            f"path={opts.audit_logger.path}"
+            f"[proxy] audit logging: {status}"
         )
 
-    async with server:
-        await server.serve_forever()
+    try:
+        async with server:
+            await server.serve_forever()
+    finally:
+        active = list(connection_tasks)
+        for task in active:
+            task.cancel()
+        if active:
+            await asyncio.gather(*active, return_exceptions=True)
 
 
 

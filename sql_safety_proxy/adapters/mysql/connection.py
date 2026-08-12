@@ -6,6 +6,7 @@ import asyncio
 from contextlib import suppress
 
 from sql_safety_proxy.proxy import ProxyOptions
+from sql_safety_proxy.sanitization import safe_exception_summary
 
 from .protocol import MySqlProtocolError
 from .relay import (
@@ -26,10 +27,8 @@ async def close_stream_writer(
     if writer is None:
         return
 
-    if writer.is_closing():
-        return
-
-    writer.close()
+    if not writer.is_closing():
+        writer.close()
 
     with suppress(
         ConnectionResetError,
@@ -50,7 +49,15 @@ async def pump_mysql_client(
     """Read client bytes and pass them through the inspected relay."""
 
     while True:
-        chunk = await reader.read(READ_CHUNK_BYTES)
+        read = reader.read(READ_CHUNK_BYTES)
+        chunk = (
+            await asyncio.wait_for(
+                read,
+                timeout=opts.socket_read_timeout_seconds,
+            )
+            if opts.socket_read_timeout_seconds is not None
+            else await read
+        )
 
         if not chunk:
             return
@@ -72,11 +79,17 @@ async def pump_mysql_backend(
     reader: asyncio.StreamReader,
     client_writer: asyncio.StreamWriter,
     state: MySqlRelayState,
+    read_timeout_seconds: float | None = None,
 ) -> None:
     """Read backend bytes and pass them through the relay."""
 
     while True:
-        chunk = await reader.read(READ_CHUNK_BYTES)
+        read = reader.read(READ_CHUNK_BYTES)
+        chunk = (
+            await asyncio.wait_for(read, timeout=read_timeout_seconds)
+            if read_timeout_seconds is not None
+            else await read
+        )
 
         if not chunk:
             return
@@ -101,14 +114,20 @@ async def handle_mysql_connection(
 
     try:
         backend_reader, backend_writer = (
-            await asyncio.open_connection(
-                opts.target_host,
-                opts.target_port,
+            await asyncio.wait_for(
+                asyncio.open_connection(
+                    opts.target_host,
+                    opts.target_port,
+                ),
+                timeout=opts.backend_connect_timeout_seconds,
             )
         )
 
         state = MySqlRelayState(
             database=opts.database_name,
+            max_packet_bytes=opts.max_message_bytes,
+            max_session_items=opts.max_session_items,
+            max_session_state_bytes=opts.max_session_state_bytes,
         )
 
         client_task = asyncio.create_task(
@@ -127,6 +146,7 @@ async def handle_mysql_connection(
                 reader=backend_reader,
                 client_writer=client_writer,
                 state=state,
+                read_timeout_seconds=opts.socket_read_timeout_seconds,
             ),
             name="mysql-backend-to-client",
         )
@@ -152,16 +172,18 @@ async def handle_mysql_connection(
         ConnectionResetError,
         BrokenPipeError,
         MySqlProtocolError,
+        asyncio.TimeoutError,
     ) as exc:
         print(
             "[proxy] MySQL connection closed after protocol or "
-            f"network error: {exc}"
+            "network error: "
+            f"{safe_exception_summary(exc, 'MySQL client session')}"
         )
 
     except OSError as exc:
         print(
-            "[proxy] failed to connect to MySQL backend "
-            f"{opts.target_host}:{opts.target_port}: {exc}"
+            "[proxy] MySQL backend connection failed "
+            f"({type(exc).__name__})"
         )
 
     finally:

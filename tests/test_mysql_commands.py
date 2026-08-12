@@ -4,6 +4,7 @@ import pytest
 
 from sql_safety_proxy.adapters.mysql.protocol import (
     COM_INIT_DB,
+    COM_PING,
     COM_QUERY,
     COM_QUIT,
     COM_STMT_CLOSE,
@@ -57,28 +58,51 @@ def test_classifies_quit_command():
     assert command.payload == b""
 
 
+def test_classifies_ping_command():
+    command = classify_command(COM_PING, b"")
+
+    assert command.kind == MySqlCommandKind.PING
+    assert command.payload == b""
+
+
 @pytest.mark.parametrize(
-    "command_code",
+    ("command_code", "expected_kind"),
     [
-        COM_STMT_PREPARE,
-        COM_STMT_EXECUTE,
-        COM_STMT_SEND_LONG_DATA,
-        COM_STMT_CLOSE,
-        COM_STMT_RESET,
+        (
+            COM_STMT_PREPARE,
+            MySqlCommandKind.STMT_PREPARE,
+        ),
+        (
+            COM_STMT_EXECUTE,
+            MySqlCommandKind.STMT_EXECUTE,
+        ),
+        (
+            COM_STMT_SEND_LONG_DATA,
+            MySqlCommandKind.STMT_SEND_LONG_DATA,
+        ),
+        (
+            COM_STMT_CLOSE,
+            MySqlCommandKind.STMT_CLOSE,
+        ),
+        (
+            COM_STMT_RESET,
+            MySqlCommandKind.STMT_RESET,
+        ),
     ],
 )
-def test_prepared_statement_commands_are_explicitly_unsupported(
+def test_classifies_prepared_statement_commands(
     command_code,
+    expected_kind,
 ):
     command = classify_command(command_code, b"payload")
 
-    assert command.kind == MySqlCommandKind.PREPARED_STATEMENT
+    assert command.kind == expected_kind
 
 
 def test_unknown_command_is_classified_as_unsupported():
-    command = classify_command(0x0E, b"")
+    command = classify_command(0x0C, b"")
 
-    assert command.command_code == 0x0E
+    assert command.command_code == 0x0C
     assert command.kind == MySqlCommandKind.UNSUPPORTED
 
 
