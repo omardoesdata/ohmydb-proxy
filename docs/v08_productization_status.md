@@ -33,7 +33,7 @@ SQL Safety Proxy v0.8.0a1 is currently under development on `feature/v0.8-produc
 
 ## Remaining v0.8 release gates
 
-- real PostgreSQL runtime regression
+- real PostgreSQL runtime regression: PASSED (2026-08-15)
 - real MariaDB server regression through mysql-connector-python
 - prepared-statement and transaction recovery regression
 - secret-leak validation
