@@ -37,7 +37,7 @@ SQL Safety Proxy v0.8.0a1 is currently under development on `feature/v0.8-produc
 - real MariaDB server regression through mysql-connector-python
 - prepared-statement and transaction recovery regression
 - secret-leak validation
-- fresh-wheel installation/runtime validation
+- fresh-wheel installation/runtime validation: PASSED (2026-08-16)
 - Docker runtime regression
 - final full quality gate
 - pull request and CI
