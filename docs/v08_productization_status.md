@@ -39,7 +39,7 @@ SQL Safety Proxy v0.8.0a1 is currently under development on `feature/v0.8-produc
 - secret-leak validation: PASSED (2026-08-18)
 - fresh-wheel installation/runtime validation: PASSED (2026-08-16)
 - Docker runtime regression: PASSED (2026-08-17)
-- final full quality gate: PASSED (2026-08-20)
+- final full quality gate: PASSED (2026-08-21): PASSED (2026-08-20)
 - pull request and CI
 - merge to main
 - tag and publish `v0.8.0a1` prerelease
