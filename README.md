@@ -26,7 +26,7 @@ MariaDB Connector/Python on Windows is not currently used as a release gate beca
 Development version:
 
 ```text
-0.8.0a1
+0.9.0rc1
 ```
 
 Latest released pre-release:
@@ -223,14 +223,14 @@ Blocked operations preserve protocol recovery behavior so client and backend sta
 Build the image:
 
 ```powershell
-docker build -t sql-safety-proxy:0.8.0a1 .
+docker build -t sql-safety-proxy:0.9.0rc1 .
 ```
 
 Check the image:
 
 ```powershell
-docker run --rm sql-safety-proxy:0.8.0a1 --version
-docker run --rm sql-safety-proxy:0.8.0a1 --help
+docker run --rm sql-safety-proxy:0.9.0rc1 --version
+docker run --rm sql-safety-proxy:0.9.0rc1 --help
 ```
 
 The image runs as a non-root user and contains the proxy only. It does not bundle PostgreSQL, MySQL, or MariaDB servers.
