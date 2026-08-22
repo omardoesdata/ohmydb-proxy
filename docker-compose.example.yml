@@ -1,0 +1,54 @@
+services:
+  postgres-proxy:
+    build: .
+    command:
+      - --adapter
+      - postgres
+      - --port
+      - "5433"
+      - --db-host
+      - host.docker.internal
+      - --db-port
+      - "5432"
+      - --db-name
+      - postgres
+    environment:
+      CONFIRMATION_MODE: cli
+      FAIL_SAFE_MODE: balanced
+      AUDIT_ENABLED: "true"
+      AUDIT_LOG_PATH: /app/logs/sql-safety-audit.jsonl
+      ESTIMATOR_USER: postgres
+      ESTIMATOR_PASSWORD: ${POSTGRES_ESTIMATOR_PASSWORD:-}
+    ports:
+      - "5433:5433"
+    volumes:
+      - sql-safety-postgres-logs:/app/logs
+
+  mysql-proxy:
+    build: .
+    command:
+      - --adapter
+      - mysql
+      - --port
+      - "3307"
+      - --db-host
+      - host.docker.internal
+      - --db-port
+      - "3306"
+      - --db-name
+      - mysql
+    environment:
+      CONFIRMATION_MODE: cli
+      FAIL_SAFE_MODE: balanced
+      AUDIT_ENABLED: "true"
+      AUDIT_LOG_PATH: /app/logs/sql-safety-audit.jsonl
+      ESTIMATOR_USER: proxy_estimator
+      ESTIMATOR_PASSWORD: ${MYSQL_ESTIMATOR_PASSWORD:-}
+    ports:
+      - "3307:3307"
+    volumes:
+      - sql-safety-mysql-logs:/app/logs
+
+volumes:
+  sql-safety-postgres-logs:
+  sql-safety-mysql-logs:
