@@ -1,10 +1,22 @@
-# SQL Safety Proxy
+<div align="center">
 
-SQL Safety Proxy is a developer-facing database safety layer that sits between normal database clients and the database server.
+# 🛡️ OhMyDB
+
+### A fail-closed safety proxy for your database.
+
+**Catch dangerous SQL before your database has to.**
+
+`PostgreSQL` · `Python` · `AsyncIO` · `Docker`
+
+> Formerly SQL Safety Proxy
+
+</div>
+
+OhMyDB is a developer-facing database safety layer that sits between normal database clients and the database server.
 
 It inspects SQL before execution, classifies risky operations, estimates affected rows where supported, applies policy decisions, and can block or require confirmation before dangerous statements reach the database.
 
-> SQL Safety Proxy is an additional safety layer. It is not a replacement for least privilege, backups, database permissions, transactions, or normal operational safeguards.
+> OhMyDB is an additional safety layer. It is not a replacement for least privilege, backups, database permissions, transactions, or normal operational safeguards.
 
 ## Supported databases
 
@@ -23,17 +35,13 @@ MariaDB Connector/Python on Windows is not currently used as a release gate beca
 
 ## Current version
 
-Development version:
+Current stable release:
 
 ```text
-1.0.0
+v1.0.0
 ```
 
-Latest released pre-release:
-
-```text
-v0.7.0a1
-```
+The project is now branded as **OhMyDB**. Releases through `v1.0.0` were published under the original **SQL Safety Proxy** name.
 
 ## Core capabilities
 

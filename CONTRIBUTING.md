@@ -1,6 +1,6 @@
 # Contributing
 
-Thank you for helping improve SQL Safety Proxy.
+Thank you for helping improve OhMyDB.
 
 ## Before contributing
 

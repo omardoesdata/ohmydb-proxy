@@ -1,4 +1,4 @@
-# SQL Safety Proxy architecture
+# OhMyDB architecture
 
 ## Product goal
 

@@ -1,4 +1,4 @@
-"""Minimal mysql-connector-python example for SQL Safety Proxy.
+"""Minimal mysql-connector-python example for OhMyDB.
 
 Run only against a disposable development database.
 The connection must point to the proxy port, not directly to MySQL/MariaDB.
