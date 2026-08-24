@@ -1,6 +1,6 @@
 # Examples
 
-These examples connect normal database drivers through SQL Safety Proxy.
+These examples connect normal database drivers through OhMyDB.
 Use them only with a disposable development database.
 
 The configured host and port must point to the proxy, not directly to the database server.

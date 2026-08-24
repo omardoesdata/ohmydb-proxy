@@ -1,4 +1,4 @@
-"""Minimal asyncpg example for SQL Safety Proxy.
+"""Minimal asyncpg example for OhMyDB.
 
 Run only against a disposable development database.
 The connection must point to the proxy port, not directly to PostgreSQL.

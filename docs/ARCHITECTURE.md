@@ -2,7 +2,7 @@
 
 ## Overview
 
-SQL Safety Proxy sits between a normal database client and the real database server.
+OhMyDB sits between a normal database client and the real database server.
 
 The high-level request path is:
 
@@ -136,7 +136,7 @@ The Docker image contains the proxy only. It does not bundle a PostgreSQL, MySQL
 
 ## Security boundary
 
-SQL Safety Proxy is an additional safety layer.
+OhMyDB is an additional safety layer.
 
 It does not replace database permissions, least privilege, backups, point-in-time recovery, transactions, change controls, or normal database security practices.
 

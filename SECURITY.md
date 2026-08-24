@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-SQL Safety Proxy is currently pre-release software.
+OhMyDB is stable software, with v1.0.0 as the first stable release.
 
 Security fixes are provided for the latest actively maintained pre-release line. Older alpha versions may not receive fixes.
 
@@ -14,7 +14,7 @@ Use GitHub Security Advisories for private disclosure through the repository Sec
 
 Please include:
 
-- affected SQL Safety Proxy version
+- affected OhMyDB version
 - operating system
 - database family and server version
 - database client or driver and version
@@ -27,7 +27,7 @@ Do not include real production credentials, confidential SQL data, access tokens
 
 ## Security boundary
 
-SQL Safety Proxy is an additional database safety layer. It is not a replacement for:
+OhMyDB is an additional database safety layer. It is not a replacement for:
 
 - least-privilege database roles
 - backups and point-in-time recovery

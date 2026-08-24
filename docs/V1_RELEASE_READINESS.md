@@ -1,4 +1,4 @@
-# SQL Safety Proxy v1.0.0 Release Readiness
+# OhMyDB v1.0.0 Release Readiness
 
 ## Stable release scope
 
@@ -34,4 +34,4 @@
 
 ## Stable-release principle
 
-SQL Safety Proxy is an additional database safety layer and does not replace least privilege, backups, transactions, permissions, or normal database operational controls.
+OhMyDB is an additional database safety layer and does not replace least privilege, backups, transactions, permissions, or normal database operational controls.

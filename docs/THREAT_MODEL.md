@@ -2,7 +2,7 @@
 
 ## Purpose
 
-SQL Safety Proxy sits between database clients and database servers and attempts to prevent or interrupt unsafe SQL before execution.
+OhMyDB sits between database clients and database servers and attempts to prevent or interrupt unsafe SQL before execution.
 
 Its primary goal is reducing accidental or unintended destructive database operations. It is not designed to replace database authorization, backups, or operational controls.
 
@@ -23,7 +23,7 @@ Primary assets include:
 
 The main request path is:
 
-client -> SQL Safety Proxy -> database server
+client -> OhMyDB -> database server
 
 Additional trust boundaries include:
 
@@ -92,7 +92,7 @@ Exact behavior depends on the configured fail-safe mode, but unsupported or ambi
 
 ## Non-goals
 
-SQL Safety Proxy does not attempt to:
+OhMyDB does not attempt to:
 
 - replace database permissions
 - replace backups or point-in-time recovery
