@@ -69,8 +69,8 @@ The project is now branded as **OhMyDB**. Releases through `v1.0.0` were publish
 For development:
 
 ```powershell
-git clone https://github.com/omardoesdata/sql-safety-proxy
-cd sql-safety-proxy
+git clone https://github.com/omardoesdata/ohmydb-proxy
+cd ohmydb-proxy
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
