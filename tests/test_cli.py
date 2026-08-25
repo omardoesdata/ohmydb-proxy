@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import pytest
 
@@ -77,7 +77,7 @@ def test_main_help_does_not_start_proxy(monkeypatch, capsys):
     assert exc_info.value.code == 0
 
     output = capsys.readouterr().out
-    assert "SQL Safety Proxy" in output
+    assert "OhMyDB" in output
     assert "--version" in output
 
 
@@ -95,7 +95,7 @@ def test_main_version_does_not_start_proxy(monkeypatch, capsys):
     assert exc_info.value.code == 0
 
     output = capsys.readouterr().out.strip()
-    assert output == f"sql-safety-proxy {__version__}"
+    assert output == f"ohmydb {__version__}"
 
 
 def test_main_reports_configuration_error_without_traceback(

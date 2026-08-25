@@ -8,7 +8,7 @@ def test_dockerfile_uses_non_root_runtime_user():
     text = (ROOT / "Dockerfile").read_text(encoding="utf-8")
 
     assert "USER sqlsafety" in text
-    assert 'ENTRYPOINT ["sql-safety-proxy"]' in text
+    assert 'ENTRYPOINT ["ohmydb"]' in text
     assert "pip install ." in text
 
 
