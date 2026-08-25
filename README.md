@@ -84,13 +84,13 @@ For package installation, install the released wheel or package artifact for the
 Show help:
 
 ```powershell
-python -m sql_safety_proxy --help
+ohmydb --help
 ```
 
 Show version:
 
 ```powershell
-python -m sql_safety_proxy --version
+ohmydb --version
 ```
 
 Available CLI overrides:
@@ -231,14 +231,14 @@ Blocked operations preserve protocol recovery behavior so client and backend sta
 Build the image:
 
 ```powershell
-docker build -t sql-safety-proxy:1.0.0 .
+docker build -t ohmydb:1.1.0 .
 ```
 
 Check the image:
 
 ```powershell
-docker run --rm sql-safety-proxy:1.0.0 --version
-docker run --rm sql-safety-proxy:1.0.0 --help
+docker run --rm ohmydb:1.1.0 --version
+docker run --rm ohmydb:1.1.0 --help
 ```
 
 The image runs as a non-root user and contains the proxy only. It does not bundle PostgreSQL, MySQL, or MariaDB servers.
@@ -299,3 +299,5 @@ Unit tests alone are not considered sufficient for release validation.
 The current v0.8 phase focuses on productization, documentation, examples, packaging, Docker, and user-facing quality.
 
 The next planned milestone is a release-candidate phase focused on final compatibility, security, performance, and release hardening before v1.0.
+
+> Compatibility: the legacy `sql-safety-proxy` CLI remains available during the OhMyDB transition.

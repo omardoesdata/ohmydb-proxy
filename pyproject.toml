@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sql-safety-proxy"
-version = "1.0.0"
+version = "1.1.0"
 description = "A local database safety proxy that warns before risky SQL mutations execute."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -31,6 +31,7 @@ dependencies = [
 ]
 
 [project.scripts]
+ohmydb = "sql_safety_proxy.cli:main"
 sql-safety-proxy = "sql_safety_proxy.cli:main"
 
 [project.urls]

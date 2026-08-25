@@ -19,4 +19,4 @@ USER sqlsafety
 
 EXPOSE 5433 3307
 
-ENTRYPOINT ["sql-safety-proxy"]
+ENTRYPOINT ["ohmydb"]

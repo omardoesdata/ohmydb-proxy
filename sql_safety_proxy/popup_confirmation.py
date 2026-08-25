@@ -1,4 +1,4 @@
-﻿"""Native desktop confirmation dialog for policy-controlled SQL queries."""
+"""Native desktop confirmation dialog for policy-controlled SQL queries."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from .confirmation import ConfirmationProvider, QueryContext
 
 @dataclass(frozen=True)
 class PopupTheme:
-    title: str = "SQL Safety Proxy"
+    title: str = "OhMyDB"
     width: int = 820
     height: int = 690
 

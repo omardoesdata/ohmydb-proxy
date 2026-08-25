@@ -297,9 +297,9 @@ def build_options(
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="sql-safety-proxy",
+        prog="ohmydb",
         description=(
-            "Run SQL Safety Proxy between a database client and a "
+            "Run OhMyDB between a database client and a "
             "PostgreSQL or MySQL/MariaDB backend."
         ),
         epilog=(
@@ -356,7 +356,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         options = build_options(args)
     except (TypeError, ValueError) as exc:
         print(
-            f"sql-safety-proxy: configuration error: {exc}",
+            f"ohmydb: configuration error: {exc}",
             file=sys.stderr,
         )
         return 2

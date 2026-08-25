@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -141,7 +141,7 @@ async def test_no_where_update_is_blocked(monkeypatch):
     assert payload_length == len(response) - 4
     assert response[3] == 1
     assert response[4] == 0xFF
-    assert b"Query blocked by sql-safety-proxy" in response
+    assert b"Query blocked by OhMyDB" in response
     assert client.drain_calls == 1
 
 

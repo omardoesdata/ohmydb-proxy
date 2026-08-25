@@ -1,4 +1,4 @@
-﻿"""Policy handling for authenticated MySQL commands."""
+"""Policy handling for authenticated MySQL commands."""
 
 from __future__ import annotations
 
@@ -261,7 +261,7 @@ async def handle_mysql_protocol_gap(
     client_writer.write(
         build_error_packet(
             (
-                "Query blocked by sql-safety-proxy. "
+                "Query blocked by OhMyDB. "
                 f"Protocol gap: {gap_decision.reason}."
             ),
             sequence_id=response_sequence_id,
@@ -283,7 +283,7 @@ def build_mysql_policy_error(
     """Build a MySQL ERR packet for a rejected SQL statement."""
 
     parts = [
-        "Query blocked by sql-safety-proxy.",
+        "Query blocked by OhMyDB.",
         f"Policy: {decision.reason}.",
         f"Severity: {decision.severity.value}.",
         f"Operation: {classification.statement_type}.",
