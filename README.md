@@ -5,6 +5,10 @@
 ### A fail-closed safety proxy for your database.
 
 **Catch dangerous SQL before your database has to.**
+[![Release](https://img.shields.io/github/v/release/omardoesdata/ohmydb-proxy?style=flat-square&label=release)](https://github.com/omardoesdata/ohmydb-proxy/releases/latest)
+[![CI](https://github.com/omardoesdata/ohmydb-proxy/actions/workflows/ci.yml/badge.svg)](https://github.com/omardoesdata/ohmydb-proxy/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/badge/Python-3.11%20%7C%203.12%20%7C%203.13-blue?style=flat-square)](https://www.python.org/)
+[![License](https://img.shields.io/github/license/omardoesdata/ohmydb-proxy?style=flat-square)](./LICENSE)
 
 `PostgreSQL` · `Python` · `AsyncIO` · `Docker`
 
@@ -38,10 +42,55 @@ MariaDB Connector/Python on Windows is not currently used as a release gate beca
 Current stable release:
 
 ```text
-v1.0.0
+v1.1.0
 ```
 
 The project is now branded as **OhMyDB**. Releases through `v1.0.0` were published under the original **SQL Safety Proxy** name.
+
+## Why OhMyDB?
+
+Databases are unforgiving.
+
+A missing `WHERE`, an unexpectedly broad mutation, or an ambiguous SQL operation can turn a routine command into a costly mistake.
+
+**OhMyDB adds a fail-closed safety layer between your database client and the backend.** It inspects risky operations before execution and refuses to silently bypass policy when behavior is malformed, ambiguous, or unsupported.
+
+## See it in action
+
+Imagine an accidental mutation:
+
+    UPDATE customers
+    SET status = 'inactive';
+
+Instead of blindly forwarding a potentially high-impact operation, OhMyDB evaluates it against its safety policy before it reaches the backend.
+
+Typical flow:
+
+    Database Client
+          |
+          v
+       OhMyDB
+          |
+          +--> Inspect SQL
+          |
+          +--> Classify risk
+          |
+          +--> Estimate impact
+          |
+          +--> Apply policy
+          |
+          +--> Allow / Confirm / Block
+          |
+          v
+       Database
+
+Run the proxy:
+
+    ohmydb --help
+
+The legacy command remains available for compatibility:
+
+    sql-safety-proxy --help
 
 ## Core capabilities
 
