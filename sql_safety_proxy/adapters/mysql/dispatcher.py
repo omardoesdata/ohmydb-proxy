@@ -1,4 +1,4 @@
-﻿"""Routing for authenticated MySQL logical commands."""
+"""Routing for authenticated MySQL logical commands."""
 
 from __future__ import annotations
 
@@ -39,7 +39,7 @@ async def _block_protocol_state_error(
     client_writer.write(
         build_error_packet(
             (
-                "Query blocked by sql-safety-proxy. Protocol state error: "
+                "Query blocked by OhMyDB. Protocol state error: "
                 f"{reason}."
             ),
             sequence_id=response_sequence_id,
