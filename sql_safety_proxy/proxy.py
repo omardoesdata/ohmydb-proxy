@@ -441,7 +441,7 @@ def _blocked_error(
     """Build a PostgreSQL error response for rejected queries."""
 
     parts = [
-        "Query blocked by sql-safety-proxy.",
+        "Query blocked by OhMyDB.",
         f"Policy: {decision.reason}.",
         f"Severity: {decision.severity.value}.",
         f"Operation: {classification.statement_type}.",
@@ -539,7 +539,7 @@ async def _handle_protocol_gap(
 
     client_writer.write(
         build_error_response(
-            "Query blocked by sql-safety-proxy. "
+            "Query blocked by OhMyDB. "
             f"Protocol gap: {gap_decision.reason}.",
             sql_state="0A000",
         )
