@@ -57,6 +57,8 @@ A missing `WHERE`, an unexpectedly broad mutation, or an ambiguous SQL operation
 
 ## See it in action
 
+For a reproducible PostgreSQL walkthrough, see **[docs/DEMO.md](docs/DEMO.md)**.
+
 Imagine an accidental mutation:
 
     UPDATE customers
