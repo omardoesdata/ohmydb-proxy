@@ -22,6 +22,12 @@ It inspects SQL before execution, classifies risky operations, estimates affecte
 
 > OhMyDB is an additional safety layer. It is not a replacement for least privilege, backups, database permissions, transactions, or normal operational safeguards.
 
+## Read the story
+
+📖 **[I Don't Trust Myself With Production Databases, So I Built OhMyDB](https://medium.com/@omarfarooqq957/i-dont-trust-myself-with-production-databases-so-i-built-ohmydb-f21d3ed1f99b)**
+
+A short write-up on the problem behind OhMyDB, how the proxy works, and why I built it.
+
 ## Supported databases
 
 Current validated scope:
