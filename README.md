@@ -53,6 +53,11 @@ v1.1.0
 
 The project is now branded as **OhMyDB**. Releases through `v1.0.0` were published under the original **SQL Safety Proxy** name.
 
+## Quick demo
+
+Want to see the safety flow first?
+
+👉 **[Run the reproducible PostgreSQL demo](docs/DEMO.md)**
 ## Why OhMyDB?
 
 Databases are unforgiving.
