@@ -105,6 +105,13 @@ The legacy command remains available for compatibility:
 
     sql-safety-proxy --help
 
+## Troubleshooting
+
+If you are validating OhMyDB locally, start with the reproducible PostgreSQL walkthrough:
+
+👉 **[docs/DEMO.md](docs/DEMO.md)**
+
+It covers the expected proxy flow, a safe query, a risky mutation, and verification that blocked operations leave the database unchanged.
 ## Core capabilities
 
 - SQL classification
