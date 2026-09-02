@@ -46,6 +46,20 @@ When the mutation is blocked, the result remains:
     ------------------
     0
 
+## Reset the demo data
+
+To repeat the walkthrough, reset the demo rows before running the risky mutation again:
+
+    UPDATE demo_customers
+    SET status = 'active';
+
+Verify the reset:
+
+    SELECT id, name, status
+    FROM demo_customers
+    ORDER BY id;
+
+This keeps repeated local demonstrations deterministic and avoids carrying state from an earlier run.
 ## Safety model
 
 OhMyDB can apply:
