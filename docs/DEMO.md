@@ -21,6 +21,16 @@ Example:
 
     psql -h 127.0.0.1 -p 5433 -U postgres -d ohmydb_demo
 
+## Verify the proxy path
+
+Before running the demo, make sure the client is connecting to the OhMyDB listening port rather than directly to the database backend.
+
+Typical local setup:
+
+    PostgreSQL backend: 5432
+    OhMyDB proxy:       5433
+
+A client connection to port 5433 confirms traffic is passing through OhMyDB before reaching PostgreSQL.
 ## Run a normal query
 
     SELECT id, name, status
