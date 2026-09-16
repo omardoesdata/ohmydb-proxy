@@ -43,3 +43,21 @@ Use this checklist before publishing a new stable OhMyDB release.
 ## Final verification
 
 After publishing, verify the release from a clean environment instead of relying only on the development checkout.
+## Quick verification commands
+
+Run these before creating a stable release:
+
+    python -m pytest
+    python -m compileall -q sql_safety_proxy
+    python -m pip check
+    ohmydb --version
+    sql-safety-proxy --version
+    git diff --check
+
+Confirm the release commit before tagging:
+
+    git status
+    git log -1 --oneline
+    git rev-parse HEAD
+
+These checks complement the CI pipeline and help catch local packaging or environment issues before publishing.
