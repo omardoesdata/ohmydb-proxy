@@ -1,0 +1,13 @@
+# Default owner for repository changes
+* @omardoesdata
+
+# Security and repository automation
+.github/ @omardoesdata
+SECURITY.md @omardoesdata
+
+# Core proxy implementation
+sql_safety_proxy/ @omardoesdata
+
+# Documentation
+docs/ @omardoesdata
+README.md @omardoesdata
