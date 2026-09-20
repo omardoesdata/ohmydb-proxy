@@ -111,6 +111,13 @@ The legacy command remains available for compatibility:
 - [Contributing guide](CONTRIBUTING.md)
 - [Security policy](SECURITY.md)
 - [Release checklist](docs/RELEASE_CHECKLIST.md)
+## Support
+
+- Report reproducible bugs through the GitHub bug report template.
+- Suggest improvements through the feature request template.
+- Report security vulnerabilities privately using the guidance in `SECURITY.md`.
+
+Please include the OhMyDB version, database backend, client or driver, and sanitized reproduction details when reporting issues.
 ## Troubleshooting
 
 If you are validating OhMyDB locally, start with the reproducible PostgreSQL walkthrough:
