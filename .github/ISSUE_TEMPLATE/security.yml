@@ -1,0 +1,37 @@
+name: Security concern
+description: Report a potential security issue or unsafe behavior
+title: "[Security]: "
+labels:
+  - security
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please do not include passwords, tokens, production data, or sensitive information.
+
+        For confirmed vulnerabilities, use private reporting through GitHub Security Advisories.
+
+  - type: input
+    id: version
+    attributes:
+      label: OhMyDB version
+      placeholder: "v1.1.0"
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Describe the suspected security issue.
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: Provide minimal steps to reproduce the behavior.
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include database backend, OS, Python version, and deployment details.
