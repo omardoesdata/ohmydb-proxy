@@ -2,7 +2,7 @@
 
 # 🛡️ OhMyDB
 
-### A fail-closed safety proxy for your database.
+### A fail-closed SQL safety layer between applications and databases.
 
 **Catch dangerous SQL before your database has to.**
 [![Release](https://img.shields.io/github/v/release/omardoesdata/ohmydb-proxy?style=flat-square&label=release)](https://github.com/omardoesdata/ohmydb-proxy/releases/latest)
