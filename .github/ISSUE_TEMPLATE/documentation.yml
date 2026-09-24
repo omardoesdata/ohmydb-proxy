@@ -1,0 +1,25 @@
+name: Documentation request
+description: Suggest improvements or report missing documentation
+title: "[Docs]: "
+labels:
+  - documentation
+
+body:
+  - type: textarea
+    id: area
+    attributes:
+      label: Documentation area
+      description: Which part needs improvement?
+      placeholder: "Installation, configuration, deployment, examples..."
+
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested improvement
+      description: Describe what should be added or changed.
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Explain why this documentation would help users.
