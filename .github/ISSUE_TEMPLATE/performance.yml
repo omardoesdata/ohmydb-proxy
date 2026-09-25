@@ -1,0 +1,42 @@
+name: Performance report
+description: Report a reproducible performance or latency issue
+title: "[Performance]: "
+labels:
+  - performance
+
+body:
+  - type: input
+    id: version
+    attributes:
+      label: OhMyDB version
+      placeholder: "v1.1.0"
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include OS, Python version, database backend/version, and client/driver.
+
+  - type: textarea
+    id: workload
+    attributes:
+      label: Workload
+      description: Describe the query pattern, request volume, or workload used.
+
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed performance
+      description: Include timings, throughput, latency, or other measurements.
+
+  - type: textarea
+    id: baseline
+    attributes:
+      label: Baseline
+      description: If available, compare against the same workload without OhMyDB.
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Provide minimal reproducible steps or commands.
