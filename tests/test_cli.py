@@ -225,3 +225,21 @@ def test_startup_summary_does_not_expose_password(
     assert "database=safe_test_db" in captured.out
     assert sentinel not in captured.out
     assert sentinel not in captured.err
+
+
+def test_main_version_has_no_stderr(monkeypatch, capsys):
+    def fail_if_options_are_built():
+        raise AssertionError(
+            "proxy configuration must not be built for --version"
+        )
+
+    monkeypatch.setattr(cli, "build_options", fail_if_options_are_built)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["--version"])
+
+    assert exc_info.value.code == 0
+
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert captured.out.strip() == f"ohmydb {__version__}"
