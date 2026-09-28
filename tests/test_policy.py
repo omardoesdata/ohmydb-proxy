@@ -131,6 +131,21 @@ def test_estimation_failure_can_be_blocked():
     assert decision.severity == Severity.HIGH
 
 
+def test_unknown_query_uses_configured_policy():
+    classification = classify("CALL unsupported_procedure()")
+
+    decision = evaluate_policy(
+        classification,
+        estimated_rows=None,
+        estimate_error=None,
+        config=PolicyConfig(
+            unknown_action=PolicyAction.BLOCK
+        ),
+    )
+
+    assert classification.risk == "unknown"
+    assert decision.action == PolicyAction.BLOCK
+
 def test_drop_uses_structural_policy():
     classification = classify("DROP TABLE users")
 
