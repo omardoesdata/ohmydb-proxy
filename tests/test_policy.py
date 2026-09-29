@@ -146,6 +146,19 @@ def test_unknown_query_uses_configured_policy():
     assert classification.risk == "unknown"
     assert decision.action == PolicyAction.BLOCK
 
+def test_unknown_query_uses_confirmation_by_default():
+    classification = classify("CALL unsupported_procedure()")
+
+    decision = evaluate_policy(
+        classification,
+        estimated_rows=None,
+        estimate_error=None,
+        config=PolicyConfig(),
+    )
+
+    assert classification.risk == "unknown"
+    assert decision.action == PolicyAction.CONFIRM
+
 def test_drop_uses_structural_policy():
     classification = classify("DROP TABLE users")
 
