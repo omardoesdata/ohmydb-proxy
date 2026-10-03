@@ -145,6 +145,7 @@ def test_unknown_query_uses_configured_policy():
 
     assert classification.risk == "unknown"
     assert decision.action == PolicyAction.BLOCK
+    assert "unknown-query policy was applied" in decision.reason
 
 def test_unknown_query_uses_confirmation_by_default():
     classification = classify("CALL unsupported_procedure()")
