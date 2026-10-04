@@ -109,6 +109,7 @@ def test_large_filtered_delete_is_blocked():
         ),
     )
 
+    assert classification.target_table == "users"
     assert decision.action == PolicyAction.BLOCK
     assert decision.severity == Severity.CRITICAL
 
