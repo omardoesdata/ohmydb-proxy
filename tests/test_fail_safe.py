@@ -112,3 +112,4 @@ async def test_permissive_gap_is_forwarded_and_audited():
     logger.log.assert_awaited_once()
     event = logger.log.await_args.args[0]
     assert event.final_decision == "ALLOWED_PROTOCOL_GAP"
+    assert event.estimate_error == "Execute referenced unknown portal 'p1'"
