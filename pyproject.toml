@@ -52,5 +52,5 @@ dev = [
     "build>=1.2",
     "psycopg[binary]>=3.2,<4",
     "PyMySQL>=1.1,<2",
-    "mysql-connector-python>=9,<10",
+    "mysql-connector-python>=9,<27",
 ]
