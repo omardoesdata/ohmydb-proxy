@@ -86,6 +86,7 @@ async def test_balanced_gap_is_blocked_and_audited():
     event = logger.log.await_args.args[0]
     assert event.final_decision == "BLOCKED_PROTOCOL_GAP"
     assert event.protocol == "extended"
+    assert event.database == "testdb"
     assert event.estimate_error == "Execute referenced unknown portal 'p1'"
 
 
