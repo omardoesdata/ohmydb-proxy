@@ -142,7 +142,6 @@ def test_idle_ready_state_clears_portals_but_keeps_statements():
     state.register_portal(BindMessage("p1", "s1"))
     state.update_transaction_status("I")
     assert state.transaction_status == "I"
-    assert state.prepared_statements["s1"] == "SELECT 1"
     assert state.portals == {}
 
 
@@ -172,6 +171,7 @@ async def test_close_message_updates_state_and_is_forwarded():
     )
 
     assert "p1" not in state.portals
+    assert state.prepared_statements["s1"] == "SELECT 1"
     assert bytes(backend.data) == raw
 
 
