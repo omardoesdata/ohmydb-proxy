@@ -225,6 +225,7 @@ async def test_simple_policy_block_preserves_transaction_status(monkeypatch):
 
     assert bytes(backend.data) == b""
     assert bytes(client.data).endswith(build_ready_for_query("T"))
+    assert state.transaction_status == "T"
 
 
 @pytest.mark.asyncio
