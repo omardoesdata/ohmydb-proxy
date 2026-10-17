@@ -173,6 +173,7 @@ async def test_close_message_updates_state_and_is_forwarded():
     assert "p1" not in state.portals
     assert state.prepared_statements["s1"] == "SELECT 1"
     assert bytes(backend.data) == raw
+    assert bytes(client.data) == b""
 
 
 @pytest.mark.asyncio
