@@ -248,3 +248,16 @@ async def test_malformed_extended_message_enters_sync_recovery():
     assert state.extended_error_pending is True
     assert bytes(backend.data) == b""
     assert bytes(client.data).startswith(b"E")
+
+def test_connection_state_close_statement_keeps_unrelated_portal():
+    state = ConnectionState()
+    state.register_statement("s1", "SELECT 1")
+    state.register_statement("s2", "SELECT 2")
+    state.register_portal(BindMessage("p1", "s1"))
+    state.register_portal(BindMessage("p2", "s2"))
+
+    state.close_statement("s1")
+
+    assert "p1" not in state.portals
+    assert "p2" in state.portals
+    assert state.prepared_statements["s2"] == "SELECT 2"
