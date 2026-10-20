@@ -261,3 +261,12 @@ def test_connection_state_close_statement_keeps_unrelated_portal():
     assert "p1" not in state.portals
     assert "p2" in state.portals
     assert state.prepared_statements["s2"] == "SELECT 2"
+
+def test_close_parser_preserves_target_fields():
+    statement = parse_close_message(b"S" + cstring("statement_1"))
+    portal = parse_close_message(b"P" + cstring("portal_1"))
+
+    assert statement.target_type == "S"
+    assert statement.name == "statement_1"
+    assert portal.target_type == "P"
+    assert portal.name == "portal_1"
