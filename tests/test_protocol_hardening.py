@@ -270,3 +270,14 @@ def test_close_parser_preserves_target_fields():
     assert statement.name == "statement_1"
     assert portal.target_type == "P"
     assert portal.name == "portal_1"
+
+def test_idle_ready_state_clears_multiple_portals_but_keeps_statement():
+    state = ConnectionState()
+    state.register_statement("s1", "SELECT 1")
+    state.register_portal(BindMessage("p1", "s1"))
+    state.register_portal(BindMessage("p2", "s1"))
+
+    state.update_transaction_status("I")
+
+    assert state.portals == {}
+    assert state.prepared_statements["s1"] == "SELECT 1"
