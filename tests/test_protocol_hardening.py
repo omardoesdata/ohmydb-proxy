@@ -281,3 +281,14 @@ def test_idle_ready_state_clears_multiple_portals_but_keeps_statement():
 
     assert state.portals == {}
     assert state.prepared_statements["s1"] == "SELECT 1"
+
+def test_transaction_ready_state_preserves_multiple_portals():
+    state = ConnectionState()
+    state.register_statement("s1", "SELECT 1")
+    state.register_portal(BindMessage("p1", "s1"))
+    state.register_portal(BindMessage("p2", "s1"))
+
+    state.update_transaction_status("T")
+
+    assert state.transaction_status == "T"
+    assert set(state.portals) == {"p1", "p2"}
