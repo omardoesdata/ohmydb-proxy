@@ -141,3 +141,5 @@ OhMyDB is an additional safety layer.
 It does not replace database permissions, least privilege, backups, point-in-time recovery, transactions, change controls, or normal database security practices.
 
 See `THREAT_MODEL.md` and the repository `SECURITY.md` for additional security context.
+
+When a protocol gap prevents safe reconstruction of a request, the configured fail-safe mode determines whether the operation is blocked or forwarded. The resulting protocol-gap decision is recorded for auditability.
