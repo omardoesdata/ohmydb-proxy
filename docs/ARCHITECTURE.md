@@ -143,3 +143,7 @@ It does not replace database permissions, least privilege, backups, point-in-tim
 See `THREAT_MODEL.md` and the repository `SECURITY.md` for additional security context.
 
 When a protocol gap prevents safe reconstruction of a request, the configured fail-safe mode determines whether the operation is blocked or forwarded. The resulting protocol-gap decision is recorded for auditability.
+
+## Protocol-gap audit trail
+
+Protocol gaps are treated as explicit safety decisions rather than successful SQL operations. The resulting block or allow outcome is recorded in the audit path together with the protocol context and reason for the gap.
