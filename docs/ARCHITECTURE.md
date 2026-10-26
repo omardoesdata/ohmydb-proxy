@@ -147,3 +147,7 @@ When a protocol gap prevents safe reconstruction of a request, the configured fa
 ## Protocol-gap audit trail
 
 Protocol gaps are treated as explicit safety decisions rather than successful SQL operations. The resulting block or allow outcome is recorded in the audit path together with the protocol context and reason for the gap.
+
+## Classification and policy boundary
+
+SQL classification identifies the risk characteristics of a request; it does not by itself authorize execution. The policy layer consumes the classification together with available impact information and determines whether the request is allowed, requires confirmation, or is blocked.
