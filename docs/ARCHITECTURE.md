@@ -151,3 +151,6 @@ Protocol gaps are treated as explicit safety decisions rather than successful SQ
 ## Classification and policy boundary
 
 SQL classification identifies the risk characteristics of a request; it does not by itself authorize execution. The policy layer consumes the classification together with available impact information and determines whether the request is allowed, requires confirmation, or is blocked.
+## Session state lifecycle
+
+Protocol state is updated as lifecycle messages are processed so subsequent requests can be interpreted safely. State associated with closed statements, portals, and connections is removed when it is no longer valid.
