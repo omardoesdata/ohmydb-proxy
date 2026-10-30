@@ -120,7 +120,7 @@ MySQL/MariaDB transaction state is tracked through supported server/session beha
 
 The proxy is designed to avoid silently weakening protection when SQL or protocol state cannot be interpreted safely.
 
-Fail-safe behavior depends on the configured mode, but protocol gaps, malformed messages, unsupported prepared parameter forms, and unsafe estimation conditions remain explicit and auditable.
+Fail-safe behavior depends on the configured mode, but protocol gaps, malformed messages, unsupported prepared parameter forms, and unsafe estimation conditions remain explicit and auditable. Protocol gaps are never silently treated as safe.
 
 ## Sanitization
 
