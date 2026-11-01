@@ -154,3 +154,6 @@ SQL classification identifies the risk characteristics of a request; it does not
 ## Session state lifecycle
 
 Protocol state is updated as lifecycle messages are processed so subsequent requests can be interpreted safely. State associated with closed statements, portals, and connections is removed when it is no longer valid.
+## Auditability
+
+Safety decisions remain observable through the proxy's audit path, including the final outcome for protocol-gap handling.
