@@ -149,6 +149,7 @@ def test_transaction_ready_state_keeps_portals():
     state = ConnectionState()
     state.register_portal(BindMessage("p1", "s1"))
     state.update_transaction_status("T")
+    assert state.transaction_status == "T"
     assert "p1" in state.portals
 
 
