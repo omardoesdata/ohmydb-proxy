@@ -60,6 +60,12 @@ def test_permissive_allows_protocol_gap():
         "unknown portal",
     )
     assert result.action == ProtocolGapAction.ALLOW
+def test_strict_protocol_gap_is_not_allowed():
+    result = evaluate_protocol_gap(
+        FailSafeMode.STRICT,
+        "malformed frontend message",
+    )
+    assert result.action != ProtocolGapAction.ALLOW
 
 
 @pytest.mark.asyncio
