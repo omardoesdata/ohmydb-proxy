@@ -204,6 +204,7 @@ async def test_extended_error_discards_messages_until_sync():
     )
     assert bytes(backend.data) == sync_raw
     assert state.extended_error_pending is False
+    assert state.transaction_status == "I"
 
 
 @pytest.mark.asyncio
