@@ -122,6 +122,8 @@ The proxy is designed to avoid silently weakening protection when SQL or protoco
 
 Fail-safe behavior depends on the configured mode, but protocol gaps, malformed messages, unsupported prepared parameter forms, and unsafe estimation conditions remain explicit and auditable. Protocol gaps are never silently treated as safe.
 
+
+Protocol-gap decisions are also auditable, including the reason associated with the recovery decision.
 ## Sanitization
 
 Sanitization is applied to user-facing errors, logs, audit events, startup summaries, and prepared-statement references.
