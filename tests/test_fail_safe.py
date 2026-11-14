@@ -122,3 +122,9 @@ async def test_permissive_gap_is_forwarded_and_audited():
     assert event.estimate_error == "Execute referenced unknown portal 'p1'"
     assert event.protocol == "extended"
     assert event.estimate_error == "Execute referenced unknown portal 'p1'"
+def test_permissive_malformed_protocol_gap_is_allowed():
+    result = evaluate_protocol_gap(
+        FailSafeMode.PERMISSIVE,
+        "malformed frontend message",
+    )
+    assert result.action == ProtocolGapAction.ALLOW
