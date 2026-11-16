@@ -12,3 +12,13 @@ def test_balanced_protocol_gap_blocks_unknown_operation():
     )
 
     assert result.action == ProtocolGapAction.BLOCK
+
+def test_balanced_protocol_gap_includes_reason():
+    result = evaluate_protocol_gap(
+        FailSafeMode.BALANCED,
+        "unknown operation",
+    )
+
+    assert result.reason == (
+        "unknown operation; balanced fail-safe mode blocks uninspectable SQL"
+    )
