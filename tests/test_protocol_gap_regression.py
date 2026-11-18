@@ -33,3 +33,14 @@ def test_strict_protocol_gap_includes_reason():
     assert result.reason == (
         "malformed frontend message; strict fail-safe mode blocks uninspectable SQL"
     )
+
+def test_permissive_protocol_gap_includes_reason():
+    result = evaluate_protocol_gap(
+        FailSafeMode.PERMISSIVE,
+        "unknown portal",
+    )
+
+    assert result.action == ProtocolGapAction.ALLOW
+    assert result.reason == (
+        "unknown portal; permissive fail-safe mode allows forwarding"
+    )
