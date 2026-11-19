@@ -44,3 +44,14 @@ def test_permissive_protocol_gap_includes_reason():
     assert result.reason == (
         "unknown portal; permissive fail-safe mode allows forwarding"
     )
+
+def test_permissive_protocol_gap_includes_reason():
+    result = evaluate_protocol_gap(
+        FailSafeMode.PERMISSIVE,
+        "unknown portal",
+    )
+
+    assert result.action == ProtocolGapAction.ALLOW
+    assert result.reason == (
+        "unknown portal; permissive fail-safe mode allows forwarding"
+    )
