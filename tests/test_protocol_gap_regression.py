@@ -66,3 +66,13 @@ def test_balanced_protocol_gap_handles_empty_reason():
     assert result.reason == (
         "; balanced fail-safe mode blocks uninspectable SQL"
     )
+
+def test_strict_protocol_gap_preserves_detailed_reason():
+    result = evaluate_protocol_gap(
+        FailSafeMode.STRICT,
+        "Execute referenced unknown portal 'p42'",
+    )
+
+    assert result.action == ProtocolGapAction.BLOCK
+    assert "unknown portal 'p42'" in result.reason
+    assert "strict fail-safe mode blocks uninspectable SQL" in result.reason
