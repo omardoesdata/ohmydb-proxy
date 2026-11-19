@@ -55,3 +55,14 @@ def test_permissive_protocol_gap_includes_reason():
     assert result.reason == (
         "unknown portal; permissive fail-safe mode allows forwarding"
     )
+
+def test_balanced_protocol_gap_handles_empty_reason():
+    result = evaluate_protocol_gap(
+        FailSafeMode.BALANCED,
+        "",
+    )
+
+    assert result.action == ProtocolGapAction.BLOCK
+    assert result.reason == (
+        "; balanced fail-safe mode blocks uninspectable SQL"
+    )
