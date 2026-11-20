@@ -163,3 +163,4 @@ Safety decisions remain observable through the proxy's audit path, including the
 ## Fail-safe mode guidance
 
 - **STRICT** mode blocks protocol gaps when the proxy cannot safely inspect the operation.
+- **BALANCED** mode blocks uninspectable protocol gaps while allowing normal supported traffic to continue through policy evaluation.
