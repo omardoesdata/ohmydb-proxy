@@ -76,3 +76,33 @@ def test_strict_protocol_gap_preserves_detailed_reason():
     assert result.action == ProtocolGapAction.BLOCK
     assert "unknown portal 'p42'" in result.reason
     assert "strict fail-safe mode blocks uninspectable SQL" in result.reason
+
+def test_balanced_protocol_gap_empty_reason():
+    result = evaluate_protocol_gap(
+        FailSafeMode.BALANCED,
+        "",
+    )
+
+    assert result.action == ProtocolGapAction.BLOCK
+    assert result.reason == (
+        "; balanced fail-safe mode blocks uninspectable SQL"
+    )
+
+def test_strict_protocol_gap_preserves_portal_reason():
+    result = evaluate_protocol_gap(
+        FailSafeMode.STRICT,
+        "Execute referenced unknown portal 'p42'",
+    )
+
+    assert result.action == ProtocolGapAction.BLOCK
+    assert "unknown portal 'p42'" in result.reason
+
+def test_permissive_protocol_gap_preserves_multiline_reason():
+    result = evaluate_protocol_gap(
+        FailSafeMode.PERMISSIVE,
+        "Malformed frontend message: line 1`nline 2",
+    )
+
+    assert result.action == ProtocolGapAction.ALLOW
+    assert "Malformed frontend message" in result.reason
+    assert "line 2" in result.reason
