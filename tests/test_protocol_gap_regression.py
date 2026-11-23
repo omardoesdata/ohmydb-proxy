@@ -1,4 +1,6 @@
-﻿from sql_safety_proxy.fail_safe import (
+import pytest
+
+from sql_safety_proxy.fail_safe import (
     FailSafeMode,
     ProtocolGapAction,
     evaluate_protocol_gap,
@@ -115,3 +117,12 @@ def test_fail_safe_mode_values():
 def test_protocol_gap_action_values():
     assert ProtocolGapAction.ALLOW.value == "ALLOW"
     assert ProtocolGapAction.BLOCK.value == "BLOCK"
+
+def test_protocol_gap_decision_is_immutable():
+    result = evaluate_protocol_gap(
+        FailSafeMode.BALANCED,
+        "unknown portal",
+    )
+
+    with pytest.raises(AttributeError):
+        result.action = ProtocolGapAction.ALLOW
