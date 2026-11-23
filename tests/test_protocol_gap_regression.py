@@ -111,3 +111,7 @@ def test_fail_safe_mode_values():
     assert FailSafeMode.STRICT.value == "strict"
     assert FailSafeMode.BALANCED.value == "balanced"
     assert FailSafeMode.PERMISSIVE.value == "permissive"
+
+def test_protocol_gap_action_values():
+    assert ProtocolGapAction.ALLOW.value == "ALLOW"
+    assert ProtocolGapAction.BLOCK.value == "BLOCK"
