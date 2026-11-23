@@ -106,3 +106,8 @@ def test_permissive_protocol_gap_preserves_multiline_reason():
     assert result.action == ProtocolGapAction.ALLOW
     assert "Malformed frontend message" in result.reason
     assert "line 2" in result.reason
+
+def test_fail_safe_mode_values():
+    assert FailSafeMode.STRICT.value == "strict"
+    assert FailSafeMode.BALANCED.value == "balanced"
+    assert FailSafeMode.PERMISSIVE.value == "permissive"
