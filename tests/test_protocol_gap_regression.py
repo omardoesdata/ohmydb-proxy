@@ -136,3 +136,15 @@ def test_protocol_gap_returns_decision_object():
     assert result.action == ProtocolGapAction.BLOCK
     assert isinstance(result.reason, str)
     assert result.reason
+
+def test_protocol_gap_decisions_compare_by_value():
+    first = evaluate_protocol_gap(
+        FailSafeMode.BALANCED,
+        "unknown portal",
+    )
+    second = evaluate_protocol_gap(
+        FailSafeMode.BALANCED,
+        "unknown portal",
+    )
+
+    assert first == second
