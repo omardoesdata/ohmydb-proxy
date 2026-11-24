@@ -148,3 +148,17 @@ def test_protocol_gap_decisions_compare_by_value():
     )
 
     assert first == second
+
+def test_protocol_gap_modes_produce_distinct_actions():
+    blocked = evaluate_protocol_gap(
+        FailSafeMode.BALANCED,
+        "unknown portal",
+    )
+    allowed = evaluate_protocol_gap(
+        FailSafeMode.PERMISSIVE,
+        "unknown portal",
+    )
+
+    assert blocked.action == ProtocolGapAction.BLOCK
+    assert allowed.action == ProtocolGapAction.ALLOW
+    assert blocked.action != allowed.action
