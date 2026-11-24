@@ -126,3 +126,39 @@ def test_protocol_gap_decision_is_immutable():
 
     with pytest.raises(AttributeError):
         result.action = ProtocolGapAction.ALLOW
+
+def test_protocol_gap_returns_decision_object():
+    result = evaluate_protocol_gap(
+        FailSafeMode.BALANCED,
+        "unknown portal",
+    )
+
+    assert result.action == ProtocolGapAction.BLOCK
+    assert isinstance(result.reason, str)
+    assert result.reason
+
+def test_protocol_gap_decisions_compare_by_value():
+    first = evaluate_protocol_gap(
+        FailSafeMode.BALANCED,
+        "unknown portal",
+    )
+    second = evaluate_protocol_gap(
+        FailSafeMode.BALANCED,
+        "unknown portal",
+    )
+
+    assert first == second
+
+def test_protocol_gap_modes_produce_distinct_actions():
+    blocked = evaluate_protocol_gap(
+        FailSafeMode.BALANCED,
+        "unknown portal",
+    )
+    allowed = evaluate_protocol_gap(
+        FailSafeMode.PERMISSIVE,
+        "unknown portal",
+    )
+
+    assert blocked.action == ProtocolGapAction.BLOCK
+    assert allowed.action == ProtocolGapAction.ALLOW
+    assert blocked.action != allowed.action
