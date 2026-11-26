@@ -13,3 +13,12 @@ def test_strict_protocol_gap_blocks():
 
     assert result.action == ProtocolGapAction.BLOCK
     assert "strict fail-safe mode blocks" in result.reason
+
+def test_balanced_protocol_gap_blocks():
+    result = evaluate_protocol_gap(
+        FailSafeMode.BALANCED,
+        "unknown prepared statement",
+    )
+
+    assert result.action == ProtocolGapAction.BLOCK
+    assert "balanced fail-safe mode blocks" in result.reason
