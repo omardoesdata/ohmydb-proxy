@@ -162,3 +162,14 @@ def test_protocol_gap_modes_produce_distinct_actions():
     assert blocked.action == ProtocolGapAction.BLOCK
     assert allowed.action == ProtocolGapAction.ALLOW
     assert blocked.action != allowed.action
+
+def test_permissive_protocol_gap_allows_unknown_operation():
+    result = evaluate_protocol_gap(
+        FailSafeMode.PERMISSIVE,
+        "unknown operation",
+    )
+
+    assert result.action == ProtocolGapAction.ALLOW
+    assert result.reason == (
+        "unknown operation; permissive fail-safe mode allows forwarding"
+    )
