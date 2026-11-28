@@ -173,3 +173,18 @@ def test_permissive_protocol_gap_allows_unknown_operation():
     assert result.reason == (
         "unknown operation; permissive fail-safe mode allows forwarding"
     )
+
+def test_protocol_gap_decision_cannot_be_mutated():
+    from dataclasses import FrozenInstanceError
+
+    result = evaluate_protocol_gap(
+        FailSafeMode.BALANCED,
+        "unsupported protocol message",
+    )
+
+    try:
+        result.action = ProtocolGapAction.ALLOW
+    except FrozenInstanceError:
+        pass
+    else:
+        raise AssertionError("Protocol gap decision must be immutable")
